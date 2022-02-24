@@ -17,6 +17,7 @@ import os
 import time
 from math import floor
 import logging
+from tensorflow.keras.layers import Dense
 #logger
 ticks = floor(time.time())
 logging.basicConfig(filename='{0}.log'.format(ticks), encoding='utf-8', level=logging.DEBUG)
@@ -37,13 +38,39 @@ env = gym.make('BipedalWalker-v3')
 env = wrap_env(env)
 state_size = env.observation_space
 
+def check_episode_exceeded(score,min_score,steps,max_steps):
+    if score<min_score:
+        logging.debug("stoped episode due to score {} lower than {}".format(score,min_score))
+    if steps>max_steps:
+        logging.debug("stoped episode due to steps {} higher than {}".format(steps,max_steps))
+        return True
+    return False
+def change_reward(reward):
+    if reward==-100:
+        return -10
+    return reward
 def train_step(agent,envir,max_steps=350,min_score=float('-inf')):
     observation = envir.reset()
     done = False
     score = 0
     steps_counter = 0
+    while not done:
+        action=agent.choose_action(observation)
+        next_observation, reward, done, info = envir.step(action)
+        steps_counter+=1
+        if check_episode_exceeded(score,min_score,steps_counter,max_steps):
+            done=True
+        else:
+            done=False
+        reward=change_reward(reward)
+        score+=reward
+        #memory
+        agent.save_transition(observation, action, reward,
+                              next_observation, done)
+        agent.learn_batch()
+        observation = next_observation
+    return score
     # ...
-    return 0, 0
 
 def train_loop(agent,episodes,envir,max_steps=350,min_score=float('-inf')):
     score_history = []
@@ -51,10 +78,10 @@ def train_loop(agent,episodes,envir,max_steps=350,min_score=float('-inf')):
     logging.info("start train loop for agent {0}".format(agent.name))
 
     for episode_idx in range(episodes):
-        score,steps = train_step(agent,envir,max_steps,min_score)
+        score = train_step(agent,envir,max_steps,min_score)
         agent.calculate_epsilon()
         score_history.append(score)
         avg_score = np.mean(score_history[-100:])
         max_score = max(max_score, score)
-        logging.info( 'episode {0} score {1} 100_moving_window_score {2} epsilon {3} actions_per_epoch {4}'.format(episode_idx,score,avg_score,agent.epsilon,steps))
-
+        logging.info( 'episode {0} score {1} 100_moving_window_score {2} epsilon {3}'.format(episode_idx,score,avg_score,agent.epsilon))
+    logging.info("Training is complete")
