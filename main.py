@@ -95,6 +95,87 @@ def train_loop(agent, episodes, envir):
             'episode {0} score {1} avg_score {2} epsilon {3}'.format(episode_idx, score, avg_score, agent.epsilon))
     logging.info("Training is complete")
 
+#mave env disc
+"""## Make env discrete"""
+def create_discrete_space(min_vals, max_vals, intervals=11):
+    # action_space_matrix = np.zeros(shape=(len(min_vals), intervals))
+    action_space_matrix = [[] * intervals] * len(min_vals)
+    for min, max, i in zip(min_vals, max_vals, range(len(min_vals))):
+        jump = (max - min) / (intervals - 1)
+        action_space_matrix[i] = [min + jump * j for j in range(intervals)]
+    return action_space_matrix
+
+def list_permutations(arr, candidate=[]):
+    if len(arr) == 0:
+        return [candidate]
+    all_res = []
+    for item in arr[0]:
+        new_candidate = candidate + [item]
+        res = list_permutations(arr[1:], new_candidate)
+        if len(res) != 0:
+            all_res.extend(res)
+    return all_res
+
+def action_index_to_coordinates(action_idx):
+    return all_perm[action_idx]
+
+"""### Action space"""
+# Get action min and max values
+action_space = env.action_space
+action_min_vals = action_space.low
+action_max_vals = action_space.high
+
+# Create action space matrix
+action_space_matrix = create_discrete_space(action_min_vals, action_max_vals, 5)
+all_perm = list_permutations(action_space_matrix)
+
+"""### Observation space"""
+#TODO- get min\max for each courdinate
+observation_space = env.observation_space
+observation_min_vals = observation_space.low
+observation_max_vals = observation_space.high
+# random sample 100000 and take min and max
+max_bin = 0
+min_bin = 0
+for i in range(10000):
+    sample = observation_space.sample()
+    cur_min = np.min(sample)
+    cur_max = np.max(sample)
+    min_bin = min(cur_min, min_bin)
+    max_bin = max(cur_max, max_bin)
+
+# round up and down
+max_bin = np.round(max_bin) + 1
+min_bin = np.round(min_bin) - 1
+state_min_vals = [
+    0, min_bin, -1, -1,
+    min_bin, min_bin, min_bin, min_bin,
+    0, min_bin, min_bin, min_bin,
+    min_bin, 0, min_bin, min_bin,
+    min_bin, min_bin, min_bin, min_bin,
+    min_bin, min_bin, min_bin, min_bin
+]
+state_max_vals = [
+    2 * np.pi, max_bin, 1, 1,
+    max_bin, max_bin, max_bin, max_bin,
+    1, max_bin, max_bin, max_bin,
+    max_bin, 1, max_bin, max_bin,
+    max_bin, max_bin, max_bin, max_bin,
+    max_bin, max_bin, max_bin, max_bin
+]
+state_matrix = create_discrete_space(state_min_vals, state_max_vals, 24)
+state_matrix[8] = [0, 1]
+state_matrix[13] = [0, 1]
+
+def map_state_to_bins(state, state_matrix):
+    res = []
+    for val, bins in zip(state, state_matrix):
+        matched_bin = np.digitize(val, bins) - 1
+        if matched_bin == -1:
+            matched_bin = 0
+        res.append(bins[matched_bin])
+    return np.asarray(res, dtype=np.float32)
+
 
 class dummy_agent:
     def __init__(self):
