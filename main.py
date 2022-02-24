@@ -75,7 +75,7 @@ def train_step(agent,envir,max_steps=350,min_score=float('-inf')):
 def train_loop(agent,episodes,envir,max_steps=350,min_score=float('-inf')):
     score_history = []
     max_score = float('-inf')
-    logging.info("start train loop for agent {0}".format(agent.name))
+    logging.info("start train loop for agent {0}".format(agent.get_name()))
 
     for episode_idx in range(episodes):
         score = train_step(agent,envir,max_steps,min_score)
@@ -85,3 +85,28 @@ def train_loop(agent,episodes,envir,max_steps=350,min_score=float('-inf')):
         max_score = max(max_score, score)
         logging.info( 'episode {0} score {1} 100_moving_window_score {2} epsilon {3}'.format(episode_idx,score,avg_score,agent.epsilon))
     logging.info("Training is complete")
+
+
+class dummy_agent():
+    def __init__(self):
+        pass
+
+    def get_name(self):
+        return "Dummy agent"
+
+    def calculate_epsilon(self):
+        logging.debug("dummy agent calculate_epsilon")
+        pass
+
+    def choose_action(self, observation):
+        action= [-1, -1, -1, -1]
+        logging.debug("dummy agent choose_action")
+
+    def save_transition(self, observation, action, reward,
+                          next_observation, done):
+        transition= "observation {} action {} reward {} next_observation {} done {})"\
+            .format(observation, action, reward,next_observation, done)
+        logging.debug("dummy agent save transition: {}".format(transition))
+
+    def learn_batch(self):
+        logging.debug("dummy agent learn batch")
