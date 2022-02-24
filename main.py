@@ -1,4 +1,5 @@
 #imports
+print("start imports")
 import matplotlib.pyplot as plt
 import gym
 import numpy as np
@@ -14,13 +15,15 @@ from IPython.display import HTML
 from pyvirtualdisplay import Display
 from IPython import display as ipythondisplay
 import os
+os.environ['LANG']='en_US'
 import time
 from math import floor
 import logging
 from tensorflow.keras.layers import Dense
+from gym.wrappers.time_limit import TimeLimit
 #logger
-ticks = floor(time.time())
-logging.basicConfig(filename='{0}.log'.format(ticks), encoding='utf-8', level=logging.DEBUG)
+ticks = str(floor(time.time()))
+logging.basicConfig(filename='temp123_{0}.log'.format(ticks), level=logging.INFO)
 #check gpu
 device_name = tf.test.gpu_device_name()
 if device_name != '/device:GPU:0':
@@ -31,25 +34,20 @@ for device in gpu_devices:
 #video
 def wrap_env(env):
   env = Monitor(env, './video', force=True)
+  #env = TimeLimit(env, max_episode_steps=1000)
   return env
 
 #make env
-env = gym.make('BipedalWalker-v3')
+env = gym.make('BipedalWalker-v3').env
 env = wrap_env(env)
+print(env.spec)
 state_size = env.observation_space
 
-def check_episode_exceeded(score,min_score,steps,max_steps):
-    if score<min_score:
-        logging.debug("stoped episode due to score {} lower than {}".format(score,min_score))
-    if steps>max_steps:
-        logging.debug("stoped episode due to steps {} higher than {}".format(steps,max_steps))
-        return True
-    return False
 def change_reward(reward):
     if reward==-100:
         return -10
     return reward
-def train_step(agent,envir,max_steps=350,min_score=float('-inf')):
+def train_step(agent,envir):
     observation = envir.reset()
     done = False
     score = 0
@@ -58,10 +56,6 @@ def train_step(agent,envir,max_steps=350,min_score=float('-inf')):
         action=agent.choose_action(observation)
         next_observation, reward, done, info = envir.step(action)
         steps_counter+=1
-        if check_episode_exceeded(score,min_score,steps_counter,max_steps):
-            done=True
-        else:
-            done=False
         reward=change_reward(reward)
         score+=reward
         #memory
@@ -72,25 +66,24 @@ def train_step(agent,envir,max_steps=350,min_score=float('-inf')):
     return score
     # ...
 
-def train_loop(agent,episodes,envir,max_steps=350,min_score=float('-inf')):
+def train_loop(agent,episodes,envir):
     score_history = []
     max_score = float('-inf')
     logging.info("start train loop for agent {0}".format(agent.get_name()))
 
     for episode_idx in range(episodes):
-        score = train_step(agent,envir,max_steps,min_score)
+        score = train_step(agent,envir)
         agent.calculate_epsilon()
         score_history.append(score)
         avg_score = np.mean(score_history[-100:])
         max_score = max(max_score, score)
-        logging.info( 'episode {0} score {1} 100_moving_window_score {2} epsilon {3}'.format(episode_idx,score,avg_score,agent.epsilon))
+        logging.info( 'episode {0} score {1} avg_score {2} epsilon {3}'.format(episode_idx,score,avg_score,agent.epsilon))
     logging.info("Training is complete")
 
 
-class dummy_agent():
+class dummy_agent:
     def __init__(self):
-        pass
-
+        self.epsilon=1
     def get_name(self):
         return "Dummy agent"
 
@@ -99,14 +92,19 @@ class dummy_agent():
         pass
 
     def choose_action(self, observation):
-        action= [-1, -1, -1, -1]
+        action=np.random.rand(4)
         logging.debug("dummy agent choose_action")
+        return action
 
     def save_transition(self, observation, action, reward,
                           next_observation, done):
-        transition= "observation {} action {} reward {} next_observation {} done {})"\
-            .format(observation, action, reward,next_observation, done)
+        transition= "action {} reward {} next_observation {} done {})"\
+            .format( action, reward,next_observation, done)
         logging.debug("dummy agent save transition: {}".format(transition))
 
     def learn_batch(self):
         logging.debug("dummy agent learn batch")
+
+print("start")
+ag=dummy_agent()
+train_loop(ag,100,env)
