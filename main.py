@@ -121,13 +121,14 @@ def action_index_to_coordinates(action_idx):
 
 """### Action space"""
 # Get action min and max values
-action_space = env.action_space
-action_min_vals = action_space.low
-action_max_vals = action_space.high
+action_space_raw = env.action_space
+action_min_vals = action_space_raw.low
+action_max_vals = action_space_raw.high
 
 # Create action space matrix
-action_space_matrix = create_discrete_space(action_min_vals, action_max_vals, 5)
-all_perm = list_permutations(action_space_matrix)
+action_space_options_matrix = create_discrete_space(action_min_vals, action_max_vals, 5)
+action_space_vectors = list_permutations(action_space_options_matrix)
+
 
 """### Observation space"""
 #TODO- get min\max for each courdinate
@@ -167,9 +168,9 @@ state_matrix = create_discrete_space(state_min_vals, state_max_vals, 24)
 state_matrix[8] = [0, 1]
 state_matrix[13] = [0, 1]
 
-def map_state_to_bins(state, state_matrix):
+def map_state_to_bins(state, state_mat):
     res = []
-    for val, bins in zip(state, state_matrix):
+    for val, bins in zip(state, state_mat):
         matched_bin = np.digitize(val, bins) - 1
         if matched_bin == -1:
             matched_bin = 0
@@ -239,12 +240,15 @@ class dummy_agent:
 
 
 class ActorCritic:
-    def __init__(self, memory, action_space, epsilon_dec, epsilon_end,alpha,beta,gamma,clip_value,layer1_size,layer2_size,num_actions):
+    def __init__(self, memory, batch_size,input_len,action_space, epsilon_dec, epsilon_end
+                 ,alpha,beta,gamma,clip_value,layer1_size,layer2_size):
         self.memory = memory
+        self.batch_size = batch_size
+        self.input_length=input_len
         self.epsilon = 1
         self.epsilon_dec = epsilon_dec
         self.epsilon_end = epsilon_end
-        self.actor, self.critic, self.policy = self.create_network()
+        self.actor, self.critic, self.policy = self.create_network(layer1_size=layer1_size,layer2_size=layer2_size)
         self.alpha = alpha
         self.beta = beta
         # Discount factor
@@ -252,19 +256,18 @@ class ActorCritic:
         self.clip_value = clip_value
         self.episode = 0
         self.input_length = state_size
-        self.layer1_size = layer1_size
-        self.layer2_size = layer2_size
         self.action_space = action_space
         self.num_actions = len(action_space)
-        self.action_space_indices = [i for i in range(num_actions)]
+        self.action_space_indices = [i for i in range(self.num_actions)]
 
-    def create_network(self):
+    def create_network(self,layer1_size,layer2_size):
+        print(self.input_length)
         input = Input(shape=(self.input_length,))
         # For loss calculation
         delta = Input(shape=[1])
-        first_layer = Dense(self.layer1_size, activation='relu')(input)
+        first_layer = Dense(layer1_size, activation='relu')(input)
         bn1 = tf.keras.layers.BatchNormalization()(first_layer)
-        second_layer = Dense(self.layer2_size, activation='relu')(bn1)
+        second_layer = Dense(layer2_size, activation='relu')(bn1)
         bn2 = tf.keras.layers.BatchNormalization()(second_layer)
         probabilities = Dense(self.num_actions,
                               activation='softmax')(bn2)
@@ -334,5 +337,10 @@ class ActorCritic:
 
 
 print("start")
-ag = dummy_agent()
-train_loop(ag, 100, env)
+#ag = dummy_agent()
+states_dim = len(state_matrix)
+mem = ReplayMemory(5000, states_dim, True, True)
+lr=0.0005
+ag=ActorCritic(memory=mem,batch_size=64,input_len=states_dim,action_space=action_space_vectors,epsilon_dec=0.001,epsilon_end=0.05,alpha=lr,
+               beta=lr,gamma=0.99,clip_value=1e-9,layer1_size=256,layer2_size=256)
+train_loop(ag, 5, env)
