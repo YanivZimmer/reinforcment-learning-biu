@@ -27,10 +27,12 @@ from tensorflow.keras.layers import Dense, Input
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
 import numpy as np
+from tensorflow.python.framework.ops import disable_eager_execution
+disable_eager_execution()
 
 # logger
 ticks = str(floor(time.time()))
-logging.basicConfig(filename='temp123_{0}.log'.format(ticks), level=logging.INFO)
+logging.basicConfig(filename='bipedal_walker_time_{0}.log'.format(ticks), level=logging.INFO)
 # check gpu
 device_name = tf.test.gpu_device_name()
 if device_name != '/device:GPU:0':
@@ -66,13 +68,13 @@ def train_step(agent, envir):
     score = 0
     steps_counter = 0
     while not done:
-        action = agent.choose_action(observation)
+        action_idx,action = agent.choose_action(observation)
         next_observation, reward, done, info = envir.step(action)
         steps_counter += 1
         reward = change_reward(reward)
         score += reward
         # memory
-        agent.save_transition(observation, action, reward,
+        agent.save_transition(observation, action_idx, action, reward,
                               next_observation, done)
         agent.learn_batch()
         observation = next_observation
@@ -188,16 +190,18 @@ class ReplayMemory:
         self.states = np.zeros((self.memory_size, state_dim), dtype=states_dtype)
         self.states_next = np.zeros((self.memory_size, state_dim), dtype=states_dtype)
         # action space discrete
-        self.actions = np.zeros(self.memory_size, dtype=actions_dtype)
+        self.actions_idx = np.zeros(self.memory_size,dtype=int)
+        self.actions = np.zeros((self.memory_size,4),dtype=float)
         # rewards are floatType
         self.rewards = np.zeros(self.memory_size, dtype=np.float32)
         # boolean but will be represeted as int
         self.is_terminal = np.zeros(self.memory_size, dtype=np.int32)
 
-    def save_transition(self, state, action, reward, state_next, is_terminal):
+    def save_transition(self, state, action_idx,action, reward, state_next, is_terminal):
         idx = self.memory_counter % self.memory_size
         self.states[idx] = state
         self.states_next[idx] = state_next
+        self.actions_idx[idx]=action_idx
         self.actions[idx] = action
         self.rewards[idx] = reward
         self.is_terminal[idx] = is_terminal
@@ -209,10 +213,11 @@ class ReplayMemory:
         states = self.states[batch]
         states_next = self.states_next[batch]
         rewards = self.rewards[batch]
+        actions_idx = self.actions_idx[batch]
         actions = self.actions[batch]
         is_terminal = self.is_terminal[batch]
 
-        return states, actions, rewards, states_next, is_terminal
+        return states, actions_idx, actions, rewards, states_next, is_terminal
 class dummy_agent:
     def __init__(self):
         self.epsilon = 1
@@ -227,7 +232,7 @@ class dummy_agent:
     def choose_action(self, observation):
         action = np.random.rand(4)
         logging.debug("dummy agent choose_action")
-        return action
+        return 0,action
 
     def save_transition(self, observation, action, reward,
                         next_observation, done):
@@ -248,20 +253,17 @@ class ActorCritic:
         self.epsilon = 1
         self.epsilon_dec = epsilon_dec
         self.epsilon_end = epsilon_end
-        self.actor, self.critic, self.policy = self.create_network(layer1_size=layer1_size,layer2_size=layer2_size)
-        self.alpha = alpha
-        self.beta = beta
+        self.num_actions = len(action_space)
+        self.actor, self.critic, self.policy = self.create_network(layer1_size=layer1_size,layer2_size=layer2_size,num_actions=self.num_actions,alpha=alpha,beta=beta)
         # Discount factor
         self.gamma = gamma
         self.clip_value = clip_value
         self.episode = 0
         self.input_length = state_size
         self.action_space = action_space
-        self.num_actions = len(action_space)
         self.action_space_indices = [i for i in range(self.num_actions)]
 
-    def create_network(self,layer1_size,layer2_size):
-        print(self.input_length)
+    def create_network(self,layer1_size,layer2_size,num_actions,alpha,beta):
         input = Input(shape=(self.input_length,))
         # For loss calculation
         delta = Input(shape=[1])
@@ -269,13 +271,13 @@ class ActorCritic:
         bn1 = tf.keras.layers.BatchNormalization()(first_layer)
         second_layer = Dense(layer2_size, activation='relu')(bn1)
         bn2 = tf.keras.layers.BatchNormalization()(second_layer)
-        probabilities = Dense(self.num_actions,
+        probabilities = Dense(num_actions,
                               activation='softmax')(bn2)
         values = Dense(1, activation='linear')(bn2)
 
         def custom_loss(actual, prediction):
             # We clip values so we dont get 0 or 1 values
-            out = Keras.clip(prediction, self.clip_value, 1 - self.clip_value)
+            out = Keras.clip(prediction,1e-9, 1 - 1e-9)
             # Calculate log-likelihood
             likelihood = actual * tf.math.log(out)
 
@@ -283,9 +285,9 @@ class ActorCritic:
             return loss
 
         actor = Model([input, delta], [probabilities])
-        actor.compile(optimizer=Adam(lr=self.alpha), loss=custom_loss)
+        actor.compile(optimizer=Adam(lr=alpha), loss=custom_loss)
         critic = Model([input], [values])
-        critic.compile(optimizer=Adam(lr=self.beta), loss='mean_squared_error')
+        critic.compile(optimizer=Adam(lr=beta), loss='mean_squared_error')
         policy = Model([input], [probabilities])
         return actor, critic, policy
 
@@ -313,10 +315,10 @@ class ActorCritic:
     def choose_action(self, observation):
         action_index = self.choose_action_index(observation)
         action = self.action_space[action_index]
-        return action
+        return action_index,action
 
-    def save_transition(self,state,action,reward,state_next,is_terminal):
-        self.memory.save_transition(state,action,reward,state_next,is_terminal)
+    def save_transition(self,state,action_idx,action,reward,state_next,is_terminal):
+        self.memory.save_transition(state,action_idx,action,reward,state_next,is_terminal)
 
     def learn_batch(self):
         if self.memory.memory_counter < self.batch_size:
@@ -324,7 +326,7 @@ class ActorCritic:
                   .format(self.batch_size, self.memory.memory_counter))
             return
 
-        states, actions, rewards, next_states, is_terminal = self.memory.sample_batch(self.batch_size)
+        states, actions_idx, actions, rewards, next_states, is_terminal = self.memory.sample_batch(self.batch_size)
 
         critic_next_value = self.critic.predict(next_states)
         critic_value = self.critic.predict(states)
@@ -333,7 +335,7 @@ class ActorCritic:
         target = rewards + self.gamma * np.max(critic_next_value) * non_terminal
         delta = target - np.concatenate(critic_value)
         self.critic.fit(states, target, verbose=0, batch_size=self.batch_size)
-        self.actor.fit([states, delta], actions, verbose=0, batch_size=self.batch_size)
+        self.actor.fit([states, delta], actions_idx, verbose=0, batch_size=self.batch_size)
 
 
 print("start")
