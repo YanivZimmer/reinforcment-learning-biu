@@ -177,6 +177,41 @@ def map_state_to_bins(state, state_matrix):
     return np.asarray(res, dtype=np.float32)
 
 
+class ReplayMemory:
+    def __init__(self, max_size, state_dim, discreteStates, discreteActions):
+        self.memory_size = max_size
+        self.memory_counter = 0
+        # discrete env space
+        states_dtype = np.int32 if discreteStates else np.float32
+        actions_dtype = np.int32 if discreteActions else np.float32
+        self.states = np.zeros((self.memory_size, state_dim), dtype=states_dtype)
+        self.states_next = np.zeros((self.memory_size, state_dim), dtype=states_dtype)
+        # action space discrete
+        self.actions = np.zeros(self.memory_size, dtype=actions_dtype)
+        # rewards are floatType
+        self.rewards = np.zeros(self.memory_size, dtype=np.float32)
+        # boolean but will be represeted as int
+        self.is_terminal = np.zeros(self.memory_size, dtype=np.int32)
+
+    def save_transition(self, state, action, reward, state_next, is_terminal):
+        idx = self.memory_counter % self.memory_size
+        self.states[idx] = state
+        self.states_next[idx] = state_next
+        self.actions[idx] = action
+        self.rewards[idx] = reward
+        self.is_terminal[idx] = is_terminal
+        self.memory_counter += 1
+
+    def sample_batch(self, batch_size):
+        max_available = min(self.memory_size, self.memory_counter)
+        batch = np.random.choice(max_available, batch_size, replace=False)
+        states = self.states[batch]
+        states_next = self.states_next[batch]
+        rewards = self.rewards[batch]
+        actions = self.actions[batch]
+        is_terminal = self.is_terminal[batch]
+
+        return states, actions, rewards, states_next, is_terminal
 class dummy_agent:
     def __init__(self):
         self.epsilon = 1
@@ -204,7 +239,8 @@ class dummy_agent:
 
 
 class ActorCritic:
-    def __init__(self,action_space, epsilon_dec, epsilon_end,alpha,beta,gamma,clip_value,layer1_size,layer2_size,num_actions):
+    def __init__(self, memory, action_space, epsilon_dec, epsilon_end,alpha,beta,gamma,clip_value,layer1_size,layer2_size,num_actions):
+        self.memory = memory
         self.epsilon = 1
         self.epsilon_dec = epsilon_dec
         self.epsilon_end = epsilon_end
@@ -276,12 +312,25 @@ class ActorCritic:
         action = self.action_space[action_index]
         return action
 
-    def save_transition(self, observation, action, reward,
-                        next_observation, done):
-        pass
+    def save_transition(self,state,action,reward,state_next,is_terminal):
+        self.memory.save_transition(state,action,reward,state_next,is_terminal)
 
     def learn_batch(self):
-        pass
+        if self.memory.memory_counter < self.batch_size:
+            print("Return::batch size bigger than memory counter :batch size={0} memory_counter={1}"\
+                  .format(self.batch_size, self.memory.memory_counter))
+            return
+
+        states, actions, rewards, next_states, is_terminal = self.memory.sample_batch(self.batch_size)
+
+        critic_next_value = self.critic.predict(next_states)
+        critic_value = self.critic.predict(states)
+        non_terminal = np.where(is_terminal == 1, 0, 1)
+        # 1 - int(done) = do not take next state into consideration if done
+        target = rewards + self.gamma * np.max(critic_next_value) * non_terminal
+        delta = target - np.concatenate(critic_value)
+        self.critic.fit(states, target, verbose=0, batch_size=self.batch_size)
+        self.actor.fit([states, delta], actions, verbose=0, batch_size=self.batch_size)
 
 
 print("start")
