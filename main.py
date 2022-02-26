@@ -255,7 +255,7 @@ class ActorCritic:
         self.memory = memory
         self.batch_size = batch_size
         self.input_length=input_len
-        self.epsilon = 1
+        self.epsilon = 0.2
         self.epsilon_dec = epsilon_dec
         self.epsilon_end = epsilon_end
         self.num_actions = len(action_space)
