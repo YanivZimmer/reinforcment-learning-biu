@@ -32,7 +32,10 @@ disable_eager_execution()
 
 # logger
 ticks = str(floor(time.time()))
-logging.basicConfig(filename='bipedal_walker_time_{0}.log'.format(ticks), level=logging.INFO)
+logging.basicConfig(level=logging.INFO,handlers=[
+        logging.FileHandler('bipedal_walker_time_{0}.log'.format(ticks)),
+        logging.StreamHandler()
+    ])
 # check gpu
 device_name = tf.test.gpu_device_name()
 if device_name != '/device:GPU:0':
@@ -50,8 +53,8 @@ def wrap_env(env):
 
 
 # make env
-env = gym.make('BipedalWalker-v3').env
-env = wrap_env(env)
+env = gym.make('BipedalWalker-v3')#.env
+#env = wrap_env(env)
 print(env.spec)
 state_size = env.observation_space
 
@@ -59,6 +62,8 @@ state_size = env.observation_space
 def change_reward(reward):
     if reward == -100:
         return -10
+    if reward>0:
+        reward=1.5*reward
     return reward
 
 
@@ -140,7 +145,7 @@ observation_max_vals = observation_space.high
 # random sample 100000 and take min and max
 max_bin = 0
 min_bin = 0
-for i in range(10000):
+for i in range(1000):
     sample = observation_space.sample()
     cur_min = np.min(sample)
     cur_max = np.max(sample)
@@ -277,7 +282,7 @@ class ActorCritic:
 
         def custom_loss(actual, prediction):
             # We clip values so we dont get 0 or 1 values
-            out = Keras.clip(prediction,1e-9, 1 - 1e-9)
+            out = Keras.clip(prediction,1e-4, 1 - 1e-4)
             # Calculate log-likelihood
             likelihood = actual * tf.math.log(out)
 
@@ -343,6 +348,6 @@ print("start")
 states_dim = len(state_matrix)
 mem = ReplayMemory(5000, states_dim, True, True)
 lr=0.0005
-ag=ActorCritic(memory=mem,batch_size=64,input_len=states_dim,action_space=action_space_vectors,epsilon_dec=0.001,epsilon_end=0.05,alpha=lr,
+ag=ActorCritic(memory=mem,batch_size=64,input_len=states_dim,action_space=action_space_vectors,epsilon_dec=0.0005,epsilon_end=0.05,alpha=lr,
                beta=lr,gamma=0.99,clip_value=1e-9,layer1_size=256,layer2_size=256)
-train_loop(ag, 5, env)
+train_loop(ag, 2000, env)
