@@ -33,7 +33,7 @@ class Actor:
         clip_tresh=1e-10
         #prob
         prob = actions * y_pred
-        old_prob = action * prediction_picks
+        old_prob = actions * prediction_picks
         prob = Keras.clip(prob,clip_tresh,1.0)
         old_prob = Keras.clip(old_prob,clip_tresh,1.0)
 
