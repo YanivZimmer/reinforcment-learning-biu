@@ -83,13 +83,13 @@ class Discretizationer:
         self.max=max
         self.interval_size = (max - min) / bins_num
     def val_to_bin(self,val):
-        bin = np.floor((val-self.min)/self.interval_size)
-        return bin
+        bin_of = np.floor((val-self.min)/self.interval_size)
+        return bin_of
     def vec_val_to_bin(self,vec):
-         bin_vec = np.zeros(len(vec))
-         for i in range(len(vec)):
-             bin_vec[i] = self.val_to_bin(vec[i])
-         return bin_vec
+        bin_vec = np.zeros(len(vec))
+        for i in range(len(vec)):
+            bin_vec[i] = self.val_to_bin(vec[i])
+        return bin_vec
     def bin_to_val(self,bin):
         #get midian value of bin
         val=(bin+0.5)*self.interval_size
@@ -107,6 +107,16 @@ class Discretizationer:
             j=np.power(self.bins_num,i)
             sum += (bin_vec[i] * j)
         return sum
+    def idx_to_val_vec(self,idx,vec_size=4):
+        bin_vec=np.zeros(vec_size)
+        for i in range(vec_size):
+            j=np.power(self.bins_num,i)
+            bin_of=np.floor(idx/j)
+            idx-=(bin_of*j)
+            bin_vec[i]=bin_of
+        print(bin_vec)
+        return self.vec_bin_to_vals(bin_vec)
+
 
 def change_reward(reward):
     if reward == -100:
@@ -242,6 +252,7 @@ class ActorCritic:
         self.clip_value = clip_value
         self.episode = 0
         self.action_discretizationer=action_discretizationer
+        self.num_actions=np.power(action_discretizationer.bins_num,4)
         self.actor, self.critic, self.policy = self.create_network(layer1_size=layer1_size,layer2_size=layer2_size,num_actions=self.num_actions,alpha=alpha,beta=beta)
 
     def critic_ppo_loss(self,values):
@@ -320,7 +331,7 @@ class ActorCritic:
 
     def choose_action_index(self, observation):
         if np.random.random() < self.epsilon:
-            return np.random.choice(self.action_discretizationer.bin_num)
+            return np.random.choice(self.action_discretizationer.bins_num)
 
         state = observation[np.newaxis, :]
         probabilities = self.policy.predict(state)[0]
@@ -338,6 +349,7 @@ class ActorCritic:
 
     def choose_action(self, observation):
         action_index = self.choose_action_index(observation)
+        action = self.action_discretizationer.idx_to_val_vec(action_index)
         return action_index,action
 
     def save_transition(self,state,action_idx,action,reward,state_next,is_terminal):
@@ -366,12 +378,12 @@ states_dim = 24
 mem = ReplayMemory(5000, states_dim, True, True)
 lr=0.00025
 
-ag_eps=ActorCritic(memory=mem,batch_size=64,input_len=states_dim,,epsilon=1,epsilon_dec=0.005,epsilon_end=0.04,alpha=lr,
-               beta=lr,gamma=0.99,clip_value=1e-9,layer1_size=256,layer2_size=256)
-ag_no_eps=ActorCritic(memory=mem,batch_size=64,input_len=states_dim,action_space=action_space_vectors,epsilon=0,epsilon_dec=0,epsilon_end=0,alpha=lr,
-               beta=lr,gamma=0.99,clip_value=1e-9,layer1_size=256,layer2_size=256)
-ag_half_eps=ActorCritic(memory=mem,batch_size=64,input_len=states_dim,action_space=action_space_vectors,epsilon=0.51,epsilon_dec=0.0025,epsilon_end=0.04,alpha=lr,
-               beta=lr,gamma=0.99,clip_value=1e-9,layer1_size=4096,layer2_size=256)
+# ag_eps=ActorCritic(memory=mem,batch_size=64,input_len=states_dim,,epsilon=1,epsilon_dec=0.005,epsilon_end=0.04,alpha=lr,
+#                beta=lr,gamma=0.99,clip_value=1e-9,layer1_size=256,layer2_size=256)
+# ag_no_eps=ActorCritic(memory=mem,batch_size=64,input_len=states_dim,action_space=action_space_vectors,epsilon=0,epsilon_dec=0,epsilon_end=0,alpha=lr,
+#                beta=lr,gamma=0.99,clip_value=1e-9,layer1_size=256,layer2_size=256)
+# ag_half_eps=ActorCritic(memory=mem,batch_size=64,input_len=states_dim,action_space=action_space_vectors,epsilon=0.51,epsilon_dec=0.0025,epsilon_end=0.04,alpha=lr,
+#                beta=lr,gamma=0.99,clip_value=1e-9,layer1_size=4096,layer2_size=256)
 
 #train_loop(ag, 2000, env)
 #last one was with eps=0
@@ -387,10 +399,10 @@ ag_half_eps=ActorCritic(memory=mem,batch_size=64,input_len=states_dim,action_spa
 # logging.info("start ag_half_eps train")
 # train_loop(ag_half_eps, 2000, env)
 # logging.info("done with ag_half_eps train")
-
+action_discretizationer= Discretizationer(6,-1,1)
 lr_low1=0.035*lr
 lr_low2=0.025*lr
-ag_half_eps=ActorCritic(memory=mem,batch_size=64,input_len=states_dim,action_space=action_space_vectors,epsilon=0.4,epsilon_dec=0.0005,epsilon_end=0.05,alpha=lr_low1,
+ag_half_eps=ActorCritic(memory=mem,batch_size=64,input_len=states_dim,action_discretizationer=action_discretizationer,epsilon=0.4,epsilon_dec=0.0005,epsilon_end=0.05,alpha=lr_low1,
                beta=lr_low2,gamma=0.99,clip_value=1e-9,layer1_size=2400,layer2_size=256)
 
 logging.info("start ag_half_eps lr low train")
