@@ -58,20 +58,55 @@ for device in gpu_devices:
 #              </video>'''.format(encoded.decode('ascii'))))
 #   else:
 #     print("Could not find video")
-
+#
 def wrap_env(env):
     env = Monitor(env, './video', force=True)
-    env = TimeLimit(env, max_episode_steps=1000)
+    #env = TimeLimit(env, max_episode_steps=1000)
     return env
 
 
 # make env
 env = gym.make('BipedalWalker-v3').env
 #env = TimeLimit(env, max_episode_steps=1000)
-#env = wrap_env(env)
+env = wrap_env(env)
 print(env.spec)
 state_size = env.observation_space
 
+#one hot
+def to_one_hot(indeces, depth):
+    return tf.one_hot(indeces, depth)
+
+class Discretizationer:
+    def __init__(self,bins_num,min,max):
+        self.bins_num = bins_num
+        self.min=min
+        self.max=max
+        self.interval_size = (max - min) / bins_num
+    def val_to_bin(self,val):
+        bin = np.floor((val-self.min)/self.interval_size)
+        return bin
+    def vec_val_to_bin(self,vec):
+         bin_vec = np.zeros(len(vec))
+         for i in range(len(vec)):
+             bin_vec[i] = self.val_to_bin(vec[i])
+         return bin_vec
+    def bin_to_val(self,bin):
+        #get midian value of bin
+        val=(bin+0.5)*self.interval_size
+        return val
+    def vec_bin_to_vals(self,bin_vec):
+        val_vec = np.zeros(len(bin_vec))
+        for i in range(len(bin_vec)):
+            val_vec[i] = self.bin_to_val(bin_vec[i])
+        return val_vec
+    def vec_val_to_idx(self,vec):
+        sum=0
+        bin_vec=self.vec_val_to_bin(vec)
+        length=len(bin_vec)
+        for i in range(length):
+            j=np.power(self.bins_num,i)
+            sum += (bin_vec[i] * j)
+        return sum
 
 def change_reward(reward):
     if reward == -100:
@@ -87,11 +122,9 @@ def train_step(agent, envir):
     done = False
     score = 0
     steps_counter = 0
-    observation=map_state_to_bins(observation,state_matrix)
     while not done:
         action_idx,action = agent.choose_action(observation)
         next_observation, reward, done, info = envir.step(action)
-        next_observation = map_state_to_bins(next_observation, state_matrix)
         steps_counter += 1
         reward = change_reward(reward)
         score += reward
@@ -120,87 +153,15 @@ def train_loop(agent, episodes, envir):
                 .format(episode_idx, score, avg_score, max_score, agent.epsilon))
     logging.info("Training is complete")
 
-#mave env disc
-"""## Make env discrete"""
-def create_discrete_space(min_vals, max_vals, intervals=11):
-    # action_space_matrix = np.zeros(shape=(len(min_vals), intervals))
-    action_space_matrix = [[] * intervals] * len(min_vals)
-    for min, max, i in zip(min_vals, max_vals, range(len(min_vals))):
-        jump = (max - min) / (intervals - 1)
-        action_space_matrix[i] = [min + jump * j for j in range(intervals)]
-    return action_space_matrix
 
-def list_permutations(arr, candidate=[]):
-    if len(arr) == 0:
-        return [candidate]
-    all_res = []
-    for item in arr[0]:
-        new_candidate = candidate + [item]
-        res = list_permutations(arr[1:], new_candidate)
-        if len(res) != 0:
-            all_res.extend(res)
-    return all_res
 
-def action_index_to_coordinates(action_idx):
-    return all_perm[action_idx]
 
 """### Action space"""
 # Get action min and max values
 action_space_raw = env.action_space
-action_min_vals = action_space_raw.low
-action_max_vals = action_space_raw.high
+ACTION_MIN_VAL = action_space_raw.low
+ACTION_MIN_MAX = action_space_raw.high
 
-# Create action space matrix
-action_space_options_matrix = create_discrete_space(action_min_vals, action_max_vals, 5)
-action_space_vectors = list_permutations(action_space_options_matrix)
-
-
-"""### Observation space"""
-#TODO- get min\max for each courdinate
-observation_space = env.observation_space
-observation_min_vals = observation_space.low
-observation_max_vals = observation_space.high
-# random sample 100000 and take min and max
-max_bin = 0
-min_bin = 0
-for i in range(1000):
-    sample = observation_space.sample()
-    cur_min = np.min(sample)
-    cur_max = np.max(sample)
-    min_bin = min(cur_min, min_bin)
-    max_bin = max(cur_max, max_bin)
-
-# round up and down
-max_bin = np.round(max_bin) + 1
-min_bin = np.round(min_bin) - 1
-state_min_vals = [
-    0, min_bin, -1, -1,
-    min_bin, min_bin, min_bin, min_bin,
-    0, min_bin, min_bin, min_bin,
-    min_bin, 0, min_bin, min_bin,
-    min_bin, min_bin, min_bin, min_bin,
-    min_bin, min_bin, min_bin, min_bin
-]
-state_max_vals = [
-    2 * np.pi, max_bin, 1, 1,
-    max_bin, max_bin, max_bin, max_bin,
-    1, max_bin, max_bin, max_bin,
-    max_bin, 1, max_bin, max_bin,
-    max_bin, max_bin, max_bin, max_bin,
-    max_bin, max_bin, max_bin, max_bin
-]
-state_matrix = create_discrete_space(state_min_vals, state_max_vals, 24)
-state_matrix[8] = [0, 1]
-state_matrix[13] = [0, 1]
-
-def map_state_to_bins(state, state_mat):
-    res = []
-    for val, bins in zip(state, state_mat):
-        matched_bin = np.digitize(val, bins) - 1
-        if matched_bin == -1:
-            matched_bin = 0
-        res.append(bins[matched_bin])
-    return np.asarray(res, dtype=np.float32)
 
 
 class ReplayMemory:
@@ -268,7 +229,7 @@ class dummy_agent:
 
 
 class ActorCritic:
-    def __init__(self, memory, batch_size,input_len,action_space, epsilon,epsilon_dec, epsilon_end
+    def __init__(self, memory, batch_size,input_len,action_discretizationer, epsilon,epsilon_dec, epsilon_end
                  ,alpha,beta,gamma,clip_value,layer1_size,layer2_size):
         self.memory = memory
         self.batch_size = batch_size
@@ -276,13 +237,11 @@ class ActorCritic:
         self.epsilon = epsilon
         self.epsilon_dec = epsilon_dec
         self.epsilon_end = epsilon_end
-        self.num_actions = len(action_space)
         # Discount factor
         self.gamma = gamma
         self.clip_value = clip_value
         self.episode = 0
-        self.action_space = action_space
-        self.action_space_indices = [i for i in range(self.num_actions)]
+        self.action_discretizationer=action_discretizationer
         self.actor, self.critic, self.policy = self.create_network(layer1_size=layer1_size,layer2_size=layer2_size,num_actions=self.num_actions,alpha=alpha,beta=beta)
 
     def critic_ppo_loss(self,values):
@@ -361,7 +320,7 @@ class ActorCritic:
 
     def choose_action_index(self, observation):
         if np.random.random() < self.epsilon:
-            return np.random.choice(self.action_space_indices)
+            return np.random.choice(self.action_discretizationer.bin_num)
 
         state = observation[np.newaxis, :]
         probabilities = self.policy.predict(state)[0]
@@ -375,11 +334,10 @@ class ActorCritic:
         #tf.random.categorical(probabilities,self.action_space_indices)
         #the_np = probabilities.eval()
         #tf.make_tensor_proto(probabilities)
-        return np.random.choice(self.action_space_indices, p=probabilities)
+        return np.random.choice(self.action_discretizationer.bin_num, p=probabilities)
 
     def choose_action(self, observation):
         action_index = self.choose_action_index(observation)
-        action = self.action_space[action_index]
         return action_index,action
 
     def save_transition(self,state,action_idx,action,reward,state_next,is_terminal):
@@ -404,10 +362,11 @@ class ActorCritic:
 
 print("start")
 #ag = dummy_agent()
-states_dim = len(state_matrix)
+states_dim = 24
 mem = ReplayMemory(5000, states_dim, True, True)
 lr=0.00025
-ag_eps=ActorCritic(memory=mem,batch_size=64,input_len=states_dim,action_space=action_space_vectors,epsilon=1,epsilon_dec=0.005,epsilon_end=0.04,alpha=lr,
+
+ag_eps=ActorCritic(memory=mem,batch_size=64,input_len=states_dim,,epsilon=1,epsilon_dec=0.005,epsilon_end=0.04,alpha=lr,
                beta=lr,gamma=0.99,clip_value=1e-9,layer1_size=256,layer2_size=256)
 ag_no_eps=ActorCritic(memory=mem,batch_size=64,input_len=states_dim,action_space=action_space_vectors,epsilon=0,epsilon_dec=0,epsilon_end=0,alpha=lr,
                beta=lr,gamma=0.99,clip_value=1e-9,layer1_size=256,layer2_size=256)
