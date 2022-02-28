@@ -341,11 +341,12 @@ class ActorCritic:
         #probabilities = np.where(np.isnan(probabilities), self.clip_value, probabilities)
 
         # Normalize probabilities
-        probabilities = probabilities / Keras.sum(probabilities)
+        #probabilities = probabilities / Keras.sum(probabilities)
         #tf.random.categorical(probabilities,self.action_space_indices)
         #the_np = probabilities.eval()
         #tf.make_tensor_proto(probabilities)
-        return np.random.choice(self.action_discretizationer.bin_num, p=probabilities)
+        opt=range(1, self.num_actions+1,1)
+        return np.random.choice(range(1, self.num_actions+1,1), p=probabilities)
 
     def choose_action(self, observation):
         action_index = self.choose_action_index(observation)
