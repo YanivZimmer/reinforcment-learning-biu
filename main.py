@@ -62,6 +62,7 @@ lr_low1 = 0.00002 #0.35 * LEARNING_RATE
 lr_low2 = 0.00002 #0.25 * LEARNING_RATE
 FIT_EPOCHS = 10
 CLIP_VALUE = 1e-9
+MODIFY_REWARD = False
 MODIFIED_REWARD = -10
 
 # logger
@@ -308,7 +309,7 @@ if MAKE_ACTION_DISCRETE:
 #     return tf.one_hot(indeces, depth)
 
 def change_reward(reward):
-    if reward == -100:
+    if MODIFY_REWARD and reward == -100:
         logging.info(f'Changed reward to {MODIFIED_REWARD}')
         return MODIFIED_REWARD
     return reward
@@ -347,21 +348,21 @@ def train_loop(agent, episodes, envir):
     for episode_idx in range(episodes):
         score = train_step(agent, envir)
         agent.calculate_epsilon()
+        score_history.append(score)
         avg_score = np.mean(score_history[-100:])
+        average_history.append(avg_score)
+
+        if average_history[-1] > max_average:
+            logging.info(f'Saving weights')
+            agent.save()
+        
         max_score = max(max_score, score)
         max_average = max(max_average, avg_score)
-
-        score_history.append(score)
-        average_history.append(avg_score)
 
         logging.info(
             'episode {0} score {1} avg_score {2} max_score {3} epsilon {4}'\
                 .format(episode_idx, score, avg_score, max_score, agent.epsilon))
         PlotModel(episode_idx, score_history, average_history)
-
-        if average_history[-1] > max_average:
-            logging.info(f'Saving weights')
-            agent.save()
     
     logging.info("Training is complete")
 
