@@ -44,20 +44,23 @@ disable_eager_execution()
 OPENAI_ENV = 'LunarLanderContinuous-v2' # 'BipedalWalker-v3'
 NUM_EPOCHS = 3000
 MAKE_ACTION_DISCRETE = True
-NUM_ACTION_BINS = [4, 5]
+NUM_ACTION_BINS = [4, 4]
 MAKE_STATE_DISCRETE = False
 NUM_STATE_BINS = 5
 MEMORY_SIZE = 5000
-BATCH_SIZE = 512
-LAYER1_SIZE = 1024
-LAYER2_SIZE = 1024
-EPSILON = 0.5
+BATCH_SIZE = 64
+LAYER1_SIZE = 128
+LAYER2_SIZE = 64
+LAYER1_ACTIVATION = 'tanh' #'relu'
+LAYER2_ACTIVATION = 'tanh' #'relu'
+EPSILON = 0
 EPSILON_DEC_RATE = 0.001
-EPSILON_MIN = 0.001
+EPSILON_MIN = 0
 GAMMA = 0.99
 LEARNING_RATE = 0.00025
-lr_low1 = 0.35 * LEARNING_RATE
-lr_low2 = 0.25 * LEARNING_RATE
+lr_low1 = 0.00002 #0.35 * LEARNING_RATE
+lr_low2 = 0.00002 #0.25 * LEARNING_RATE
+FIT_EPOCHS = 10
 CLIP_VALUE = 1e-9
 MODIFIED_REWARD = -10
 
@@ -104,16 +107,13 @@ def PlotModel(episode, scores, averages):
         pylab.plot(episodes, averages, 'r')
         pylab.title(f'{OPENAI_ENV} PPO training cycle\n\
                         lr actor = {lr_low1}, lr critic = {lr_low2}, epsilon = ({EPSILON},{EPSILON_DEC_RATE},{EPSILON_MIN})\n\
-                        layer1 = {LAYER1_SIZE}, layer2 = {LAYER2_SIZE}, action bins = {NUM_ACTION_BINS}, batch = {BATCH_SIZE}', fontsize=8)
-        # pylab.text(0.5, 0, f'lr actor = {lr_low1}, lr critic = {lr_low2}, epsilon = ({EPSILON},{EPSILON_DEC_RATE},{EPSILON_MIN})',
-        #             ha='left', va='top')
-        # pylab.text(0.5, 1, f'layer1 = {LAYER1_SIZE}, layer2 = {LAYER2_SIZE}, action bins = {NUM_ACTION_BINS}',
-        #             ha='left', va='top')
-        pylab.ylabel('Score', fontsize=18)
-        pylab.xlabel('Steps', fontsize=18)
+                        layer1 = {LAYER1_SIZE}, layer2 = {LAYER2_SIZE}, action bins = {NUM_ACTION_BINS}, batch = {BATCH_SIZE}\n\
+                        reward = {MODIFIED_REWARD}, fit epoxhs = {FIT_EPOCHS}', fontsize=8)
+        pylab.ylabel('Score', fontsize=10)
+        pylab.xlabel('Steps', fontsize=10)
         try:
             pylab.grid(True)
-            pylab.savefig(f'{OPENAI_ENV}-{date_str}.png')
+            pylab.savefig(f'plots/{OPENAI_ENV}-{date_str}.png')
         except OSError:
             pass
 
@@ -341,6 +341,7 @@ def train_loop(agent, episodes, envir):
     score_history = []
     average_history = []
     max_score = float('-inf')
+    max_average = float('-inf')
     logging.info("start train loop for agent {0}".format(agent.get_name()))
 
     for episode_idx in range(episodes):
@@ -348,6 +349,7 @@ def train_loop(agent, episodes, envir):
         agent.calculate_epsilon()
         avg_score = np.mean(score_history[-100:])
         max_score = max(max_score, score)
+        max_average = max(max_average, avg_score)
 
         score_history.append(score)
         average_history.append(avg_score)
@@ -356,6 +358,10 @@ def train_loop(agent, episodes, envir):
             'episode {0} score {1} avg_score {2} max_score {3} epsilon {4}'\
                 .format(episode_idx, score, avg_score, max_score, agent.epsilon))
         PlotModel(episode_idx, score_history, average_history)
+
+        if average_history[-1] > max_average:
+            logging.info(f'Saving weights')
+            agent.save()
     
     logging.info("Training is complete")
 
@@ -482,12 +488,12 @@ class ActorCritic:
         # For loss calculation
         delta = Input(shape=[1])
         #first_layer = Dense(layer1_size, activation='relu')(input)
-        first_layer=Dense(layer1_size, activation='relu', kernel_initializer= \
+        first_layer=Dense(layer1_size, activation=LAYER1_ACTIVATION, kernel_initializer= \
             tf.random_normal_initializer(stddev=0.01))(input)
 
         bn1 = tf.keras.layers.BatchNormalization()(first_layer)
         #second_layer = Dense(layer2_size, activation='relu')(bn1)
-        second_layer=Dense(layer2_size, activation='relu', kernel_initializer= \
+        second_layer=Dense(layer2_size, activation=LAYER2_ACTIVATION, kernel_initializer= \
             tf.random_normal_initializer(stddev=0.01))(bn1)
         bn2 = tf.keras.layers.BatchNormalization()(second_layer)
         probabilities = Dense(num_actions,
@@ -512,6 +518,12 @@ class ActorCritic:
 
     def get_name(self):
         return "Actor Critic agent"
+    
+    def _get_actor_weight_file_name(self):
+        return f'weights/{OPENAI_ENV}-actor-{date_str}'
+    
+    def _get_critic_weight_file_name(self):
+        return f'weights/{OPENAI_ENV}-critic-{date_str}'
 
     def calculate_epsilon(self):
         self.epsilon = max(self.epsilon - self.epsilon_dec, self.epsilon_end)
@@ -542,6 +554,14 @@ class ActorCritic:
 
     def save_transition(self,state,action_idx,action,reward,state_next,is_terminal):
         self.memory.save_transition(state,action_idx,action,reward,state_next,is_terminal)
+    
+    def save(self):
+        self.actor.save_weights(self._get_actor_weight_file_name())
+        self.critic.save_weights(self._get_critic_weight_file_name())
+    
+    def load(self):
+        self.actor.load_weights(self._get_actor_weight_file_name())
+        self.critic.load_weights(self._get_critic_weight_file_name())
 
     def learn_batch(self):
         if self.memory.memory_counter < self.batch_size:
@@ -562,8 +582,8 @@ class ActorCritic:
         # print(f'target: {target}')
         delta = target - critic_value
         # print(f'delta: {delta}')
-        self.critic.fit(states, target, verbose=0, batch_size=self.batch_size)
-        self.actor.fit([states, delta], actions_idx, verbose=0, batch_size=self.batch_size)
+        self.critic.fit(states, target, verbose=0, epochs=FIT_EPOCHS, batch_size=self.batch_size)
+        self.actor.fit([states, delta], actions_idx, epochs=FIT_EPOCHS, verbose=0, batch_size=self.batch_size)
 
 class AgentDDQN():
     def __init__(self, lr, gemma, action_space, batch_size, states_dim,Memory,
@@ -681,11 +701,11 @@ mem = ReplayMemory(MEMORY_SIZE, actions_dim, states_dim)
 # logging.info("done with ag_half_eps train")
 # action_discretizationer= Discretizationer(NUM_ACTION_BINS, -1, 1)
 
-ag_half_eps=ActorCritic(memory=mem,batch_size=BATCH_SIZE,input_len=states_dim, actions_dim=actions_dim, index_to_action=env.index_to_action,
+ac_agent = ActorCritic(memory=mem,batch_size=BATCH_SIZE,input_len=states_dim, actions_dim=actions_dim, index_to_action=env.index_to_action,
                         epsilon=EPSILON,epsilon_dec=EPSILON_DEC_RATE,epsilon_end=EPSILON_MIN,alpha=lr_low1,
                         beta=lr_low2,gamma=GAMMA,clip_value=CLIP_VALUE,layer1_size=LAYER1_SIZE,layer2_size=LAYER2_SIZE)
 
 logging.info("start ag_half_eps lr low train")
-train_loop(ag_half_eps, NUM_EPOCHS, env)
+train_loop(ac_agent, NUM_EPOCHS, env)
 logging.info("done with ag_half_eps lr low train")
 
