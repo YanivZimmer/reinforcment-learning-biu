@@ -68,7 +68,7 @@ def wrap_env(env):
 # make env
 env = gym.make('BipedalWalker-v3').env
 #env = TimeLimit(env, max_episode_steps=1000)
-env = wrap_env(env)
+#env = wrap_env(env)
 print(env.spec)
 state_size = env.observation_space
 
@@ -83,6 +83,8 @@ class Discretizationer:
         self.max=max
         self.interval_size = (max - min) / bins_num
     def val_to_bin(self,val):
+        if(val==self.max):
+            return self.bins_num-1
         bin_of = np.floor((val-self.min)/self.interval_size)
         return bin_of
     def vec_val_to_bin(self,vec):
@@ -92,7 +94,7 @@ class Discretizationer:
         return bin_vec
     def bin_to_val(self,bin):
         #get midian value of bin
-        val=(bin+0.5)*self.interval_size
+        val=(bin-0.5)*self.interval_size
         return val
     def vec_bin_to_vals(self,bin_vec):
         val_vec = np.zeros(len(bin_vec))
@@ -110,13 +112,12 @@ class Discretizationer:
     def idx_to_val_vec(self,idx,vec_size=4):
         bin_vec=np.zeros(vec_size)
         for i in range(vec_size):
-            j=np.power(self.bins_num,i)
+            j=np.power(self.bins_num,vec_size-i-1)
             bin_of=np.floor(idx/j)
             idx-=(bin_of*j)
-            bin_vec[i]=bin_of
-        print(bin_vec)
+            bin_vec[vec_size-i-1]=bin_of
+        #print(bin_vec)
         return self.vec_bin_to_vals(bin_vec)
-
 
 def change_reward(reward):
     if reward == -100:
@@ -168,9 +169,9 @@ def train_loop(agent, episodes, envir):
 
 """### Action space"""
 # Get action min and max values
-action_space_raw = env.action_space
-ACTION_MIN_VAL = action_space_raw.low
-ACTION_MIN_MAX = action_space_raw.high
+# action_space_raw = env.action_space
+# ACTION_MIN_VAL = action_space_raw.low
+# ACTION_MIN_MAX = action_space_raw.high
 
 
 
@@ -300,19 +301,19 @@ class ActorCritic:
 
         bn1 = tf.keras.layers.BatchNormalization()(first_layer)
         #second_layer = Dense(layer2_size, activation='relu')(bn1)
-        # second_layer=Dense(layer2_size, activation='relu', kernel_initializer= \
-        #     tf.random_normal_initializer(stddev=0.01))(bn1)
-        # bn2 = tf.keras.layers.BatchNormalization()(second_layer)
+        second_layer=Dense(layer2_size, activation='relu', kernel_initializer= \
+            tf.random_normal_initializer(stddev=0.01))(bn1)
+        bn2 = tf.keras.layers.BatchNormalization()(second_layer)
         probabilities = Dense(num_actions,
-                              activation='softmax')(bn1)
-        values = Dense(1, activation='linear')(bn1)
+                              activation='softmax')(bn2)
+        values = Dense(1, activation='linear')(bn2)
 
         def custom_loss(actual, prediction):
             # We clip values so we dont get 0 or 1 values
-            #out = Keras.clip(prediction,1e-4, 1 - 1e-4)
+            out = Keras.clip(prediction,1e-4, 1 - 1e-4)
             # Calculate log-likelihood
-            #likelihood = actual * tf.math.log(out)
-            likelihood = tf.math.log(prediction)
+            likelihood = actual * tf.math.log(out)
+            #likelihood = tf.math.log(prediction)
             loss = tf.reduce_sum(-likelihood * delta)
             return loss
 
@@ -369,8 +370,8 @@ class ActorCritic:
         # 1 - int(done) = do not take next state into consideration if done
         target = rewards + self.gamma * np.max(critic_next_value) * non_terminal
         delta = target - np.concatenate(critic_value)
-        self.critic.fit(states, target, verbose=0, batch_size=self.batch_size)
-        self.actor.fit([states, delta], actions_idx, verbose=0, batch_size=self.batch_size)
+        self.critic.fit(states, target, verbose=1, batch_size=self.batch_size)
+        self.actor.fit([states, delta], actions_idx, verbose=1, batch_size=self.batch_size)
 
 
 print("start")
@@ -401,10 +402,10 @@ lr=0.00025
 # train_loop(ag_half_eps, 2000, env)
 # logging.info("done with ag_half_eps train")
 action_discretizationer= Discretizationer(6,-1,1)
-lr_low1=0.035*lr
-lr_low2=0.025*lr
+lr_low1=0.35*lr
+lr_low2=0.25*lr
 ag_half_eps=ActorCritic(memory=mem,batch_size=64,input_len=states_dim,action_discretizationer=action_discretizationer,epsilon=0.4,epsilon_dec=0.0005,epsilon_end=0.05,alpha=lr_low1,
-               beta=lr_low2,gamma=0.99,clip_value=1e-9,layer1_size=2400,layer2_size=256)
+               beta=lr_low2,gamma=0.99,clip_value=1e-9,layer1_size=1024,layer2_size=1024)
 
 logging.info("start ag_half_eps lr low train")
 train_loop(ag_half_eps, 3000, env)
