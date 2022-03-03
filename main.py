@@ -43,7 +43,10 @@ disable_eager_execution()
 
 class ModelType(Enum):
     ACTOR_CRITIC = 1
-    DQN = 2
+    DDQN = 2
+
+# When on dry run, no output files are created
+DRY_RUN = False
 
 # Run settings
 OPENAI_ENV = 'LunarLanderContinuous-v2' # 'BipedalWalker-v3'
@@ -79,12 +82,20 @@ if MODEL == ModelType.ACTOR_CRITIC:
     EPSILON_DEC_RATE = 0.00
     EPSILON_MIN = 0.00
 
-# logger
+# Logging configuration
+logging.basicConfig(format='%(asctime)s %(levelname)-8s %(message)s',level=logging.INFO)
+
 date_str = datetime.today().strftime('%d-%m-%Y-%H-%M-%S')
-logging.basicConfig(format='%(asctime)s %(levelname)-8s %(message)s',level=logging.INFO,handlers=[
-        logging.FileHandler(f'logs/{OPENAI_ENV}_time_{date_str}.log'),
-        logging.StreamHandler()
-    ])
+stdout_handler = logging.StreamHandler()
+file_handler = logging.FileHandler(f'logs/{OPENAI_ENV}_time_{date_str}.log')
+
+# logger
+logger = logging.getLogger()
+
+# Add handlers
+if not DRY_RUN:
+    logger.addHandler(stdout_handler)
+    logger.addHandler(file_handler)
 
 # check gpu
 device_name = tf.test.gpu_device_name()
@@ -115,6 +126,9 @@ def wrap_env(env):
     return env
 
 def PlotModel(episode, scores, averages):
+    if DRY_RUN:
+        return
+
     episodes = [i for i in range(0, episode + 1)]
 
     if str(episode)[-1:] == "0":# much faster than episode % 100
@@ -324,63 +338,14 @@ if MAKE_ACTION_DISCRETE:
 
 def change_reward(reward):
     if reward == -100:
-        logging.info('Failed!')
+        logger.info('Failed!')
         if MODIFY_REWARD:
-            logging.info(f'Changed reward to {MODIFIED_REWARD}')
+            logger.info(f'Changed reward to {MODIFIED_REWARD}')
             return MODIFIED_REWARD
     return reward
     # if reward>0:
     #     reward=1.5*reward
     # return reward
-
-
-def train_step(agent, envir):
-    observation = envir.reset()
-    done = False
-    score = 0
-    steps_counter = 0
-    while not done:
-        action_idx,action = agent.choose_action(observation)
-        next_observation, reward, done, info = envir.step(action)
-        steps_counter += 1
-        reward = change_reward(reward)
-        score += reward
-        # memory
-        agent.save_transition(observation, action_idx, action, reward,
-                              next_observation, done)
-        agent.learn_batch()
-        observation = next_observation
-    return score
-    # ...
-
-
-def train_loop(agent, episodes, envir):
-    score_history = []
-    average_history = []
-    max_score = float('-inf')
-    max_average = float('-inf')
-    logging.info("start train loop for agent {0}".format(agent.get_name()))
-
-    for episode_idx in range(episodes):
-        score = train_step(agent, envir)
-        agent.calculate_epsilon()
-        score_history.append(score)
-        avg_score = np.mean(score_history[-100:])
-        average_history.append(avg_score)
-
-        if average_history[-1] > max_average:
-            logging.info(f'Saving weights')
-            agent.save()
-        
-        max_score = max(max_score, score)
-        max_average = max(max_average, avg_score)
-
-        logging.info(
-            'episode {0} score {1} avg_score {2} max_score {3} epsilon {4}'\
-                .format(episode_idx, score, avg_score, max_score, agent.epsilon))
-        PlotModel(episode_idx, score_history, average_history)
-    
-    logging.info("Training is complete")
 
 class ReplayMemory:
     def __init__(self, max_size, actions_dim, state_dim):
@@ -428,40 +393,80 @@ class ReplayMemory:
 #         return "Dummy agent"
 
 #     def calculate_epsilon(self):
-#         logging.debug("dummy agent calculate_epsilon")
+#         logger.debug("dummy agent calculate_epsilon")
 #         pass
 
 #     def choose_action(self, observation):
 #         action = np.random.rand(4)
-#         logging.debug("dummy agent choose_action")
+#         logger.debug("dummy agent choose_action")
 #         return 0,action
 
 #     def save_transition(self, observation, action, reward,
 #                         next_observation, done):
 #         transition = "action {} reward {} next_observation {} done {})" \
 #             .format(action, reward, next_observation, done)
-#         logging.debug("dummy agent save transition: {}".format(transition))
+#         logger.debug("dummy agent save transition: {}".format(transition))
 
 #     def learn_batch(self):
-#         logging.debug("dummy agent learn batch")
+#         logger.debug("dummy agent learn batch")
 
-
-class ActorCritic:
-    def __init__(self, memory, batch_size, input_len, actions_dim, index_to_action: Function, epsilon, epsilon_dec, epsilon_end,
-                    alpha, beta, gamma, clip_value, layer1_size, layer2_size):
+class RLModel:
+    def __init__(self, memory, batch_size, input_len, actions_dim, epsilon,
+                    epsilon_dec, epsilon_end, gamma):
         self.memory = memory
         self.batch_size = batch_size
         self.input_length=input_len
         self.actions_dim = actions_dim
-        self.index_to_action = index_to_action
         self.epsilon = epsilon
         self.epsilon_dec = epsilon_dec
         self.epsilon_end = epsilon_end
         # Discount factor
         self.gamma = gamma
-        self.clip_value = clip_value
         self.episode = 0
         self.num_actions = np.prod(NUM_ACTION_BINS) #np.power(NUM_ACTION_BINS, actions_dim)
+
+    def get_name(self):
+        pass
+
+    def choose_action(self, observation):
+        pass
+
+    def save_transition(self, state, action_idx, action, reward, state_next, is_terminal):
+        pass
+
+    def learn(self):
+        pass
+
+    def calculate_epsilon(self):
+        pass
+
+    def calculate_lr(self):
+        pass
+
+    def save(self):
+        pass
+
+    def load(self):
+        pass
+
+class ActorCritic(RLModel):
+    def __init__(self, memory, batch_size, input_len, actions_dim, index_to_action: Function, epsilon, epsilon_dec, epsilon_end,
+                    alpha, beta, gamma, clip_value, layer1_size, layer2_size):
+        super().__init__(memory, batch_size, input_len, actions_dim,
+                            epsilon, epsilon_dec, epsilon_end, gamma)
+        # self.memory = memory
+        # self.batch_size = batch_size
+        # self.input_length=input_len
+        # self.actions_dim = actions_dim
+        self.index_to_action = index_to_action
+        # self.epsilon = epsilon
+        # self.epsilon_dec = epsilon_dec
+        # self.epsilon_end = epsilon_end
+        # # Discount factor
+        # self.gamma = gamma
+        self.clip_value = clip_value
+        # self.episode = 0
+        # self.num_actions = np.prod(NUM_ACTION_BINS) #np.power(NUM_ACTION_BINS, actions_dim)
         self.actor, self.critic, self.policy = self.create_network(layer1_size = layer1_size, layer2_size = layer2_size,
                                                                     num_actions = self.num_actions, alpha = alpha, beta = beta)
 
@@ -573,12 +578,18 @@ class ActorCritic:
         self.memory.save_transition(state,action_idx,action,reward,state_next,is_terminal)
     
     def save(self):
-        self.actor.save_weights(self._get_actor_weight_file_name())
-        self.critic.save_weights(self._get_critic_weight_file_name())
+        if DRY_RUN:
+            return
+        
+        self.actor.save_weights(self._get_actor_weight_file_name(), overwrite = True)
+        self.critic.save_weights(self._get_critic_weight_file_name(), overwrite = True)
     
     def load(self):
         self.actor.load_weights(self._get_actor_weight_file_name())
         self.critic.load_weights(self._get_critic_weight_file_name())
+
+    def learn(self):
+        self.learn_batch()
 
     def learn_batch(self):
         if self.memory.memory_counter < self.batch_size:
@@ -602,93 +613,157 @@ class ActorCritic:
         self.critic.fit(states, target, verbose=0, epochs=FIT_EPOCHS, batch_size=self.batch_size)
         self.actor.fit([states, delta], actions_idx, epochs=FIT_EPOCHS, verbose=0, batch_size=self.batch_size)
 
-class AgentDDQN():
-    def __init__(self, lr, gemma, action_space, batch_size, states_dim,Memory,
+class AgentDDQN(RLModel):
+    def __init__(self, lr, gamma, actions_dim, batch_size, states_dim,memory,
                epsilon, epsilon_dec=1e-3, epsilon_end=0.01,
                 fname='dqn_model.h5'):
+      super().__init__(memory, batch_size, states_dim, actions_dim,
+                        epsilon, epsilon_dec, epsilon_end, gamma)
       self.model_file = fname
-      self.gemma = gemma
-      self.action_space = action_space
+      self.gamma = gamma
+      self.actions_dim = actions_dim
       self.epsilon = epsilon
       self.epsilon_dec = epsilon_dec
       self.epsilon_end = epsilon_end
-      self.batch_size = batch_size
+    #   self.batch_size = batch_size
       self.lr=lr
-      self.memory = Memory
-      self.q_eval1 = self._build_dqn(lr,len(action_space),states_dim)
-      self.q_eval2 = self._build_dqn(lr,len(action_space),states_dim)
+    #   self.memory = Memory
+      self.q_eval1 = self._build_dqn(lr,actions_dim,states_dim)
+      self.q_eval2 = self._build_dqn(lr,actions_dim,states_dim)
 
     def _build_dqn(lr,number_actions,state_dim):
         model = keras.Sequential([
-            keras.layers.Dense(state_dim,activation='relu'),
-            keras.layers.Dense(128,activation='tanh'),
-            keras.layers.Dense(64,activation='tanh'),
-            keras.layers.Dense(number_actions,activation=None)
-            ])
+            keras.layers.Dense(state_dim, activation='relu'),
+            keras.layers.Dense(128, activation='tanh'),
+            keras.layers.Dense(64, activation='tanh'),
+            keras.layers.Dense(number_actions, activation=None)
+        ])
         model.compile(optimizer=Adam(learning_rate=lr),loss='mean_squared_error')
         #model.summary()
         return model
+    
+    def get_name(self):
+        return "Double Deep Q Network"
 
-    def save_transition(self,state,action,reward,state_next,is_terminal):
-      self.memory.save_transition(state,action,reward,state_next,is_terminal)
+    def save_transition(self,state,action_idx,action,reward,state_next,is_terminal):
+        self.memory.save_transition(state,action_idx,action,reward,state_next,is_terminal)
 
     def calculate_epsilon(self):
-      discount_eps=1
-      if self.epsilon <4*self.epsilon_end:
-        discount_eps=0.25
-      if self.epsilon <2*self.epsilon_end:
-        discount_eps=0.025
-      self.epsilon = max(self.epsilon - discount_eps*self.epsilon_dec,self.epsilon_end)
+        discount_eps=1
+        if self.epsilon <4*self.epsilon_end:
+            discount_eps=0.25
+        if self.epsilon <2*self.epsilon_end:
+            discount_eps=0.025
+        self.epsilon = max(self.epsilon - discount_eps*self.epsilon_dec,self.epsilon_end)
     
     def calculate_lr(self):
-      print("lr to 0.95*lr")
-      self.lr=0.95*self.lr
-      K.set_value(self.q_eval1.optimizer.learning_rate,self.lr )
-      K.set_value(self.q_eval2.optimizer.learning_rate,self.lr )
+        print("lr to 0.95 * lr")
+        self.lr = 0.95 * self.lr
+        K.set_value(self.q_eval1.optimizer.learning_rate, self.lr)
+        K.set_value(self.q_eval2.optimizer.learning_rate, self.lr)
 
+    def _get_q_eval_weight_file_name(self, layer_num):
+        return f'weights/{OPENAI_ENV}-eval{layer_num}-{date_str}'
 
-    def save_weights(self):
-      self.q_eval1.save_weights('ddqn1_weights.h5f', overwrite=True)
-      self.q_eval2.save_weights('ddqn2_weights.h5f', overwrite=True)
+    def save(self):
+        if DRY_RUN:
+            return
+        
+        self.q_eval1.save_weights(self._get_q_eval_weight_file_name(1), overwrite = True)
+        self.q_eval2.save_weights(self._get_q_eval_weight_file_name(2), overwrite = True)
 
+    def load(self):
+        self.q_eval1.load_weights(self._get_q_eval_weight_file_name(1))
+        self.q_eval2.load_weights(self._get_q_eval_weight_file_name(2))
 
-    def choose_action(self,observation):
-    #chose random with epsilon prob 
-      if np.random.random() < self.epsilon:
-        return np.random.choice(self.action_space)
+    def choose_action(self, observation):
+        #chose random with epsilon prob 
+        if np.random.random() < self.epsilon:
+            return np.random.choice(self.actions_dim)
 
-      state = np.array([observation])
-      choose_nn1=False
+        state = np.array([observation])
+        choose_nn1=False
 
-      if np.random.random()<0.5:
-        choose_nn1=True     
-      if choose_nn1:
-          return np.argmax(self.q_eval1.predict(state))
-      return np.argmax(self.q_eval2.predict(state))     
+        if np.random.random()<0.5:
+            choose_nn1=True     
+        if choose_nn1:
+            return np.argmax(self.q_eval1.predict(state))
+        return np.argmax(self.q_eval2.predict(state))     
 
     def train2nn(self,nn1,nn2,states, actions, rewards, states_next,non_terminal):
-      q_eval = nn1.predict(states)
-      q_next = nn2.predict(states_next)
-      q_target = np.copy(q_eval)
-      batch_idx = np.arange(self.batch_size, dtype=np.int32)
-      q_target[batch_idx,actions] = rewards+self.gemma*np.max(q_next,axis=1)*(non_terminal)
-      nn1.train_on_batch(states,q_target)
+        q_eval = nn1.predict(states)
+        q_next = nn2.predict(states_next)
+        q_target = np.copy(q_eval)
+        batch_idx = np.arange(self.batch_size, dtype=np.int32)
+        q_target[batch_idx,actions] = rewards+self.gamma * np.max(q_next,axis=1)*(non_terminal)
+        nn1.train_on_batch(states,q_target)
 
     def learn(self):
-      if self.memory.memory_counter<self.batch_size:
-        print("Return::batch size bigger than memory counter :batch size={0} memory_counter={1}".format(self.batch_size,self.memory.memory_counter))
-        return
+        if self.memory.memory_counter<self.batch_size:
+            print("Return::batch size bigger than memory counter :batch size={0} memory_counter={1}".format(self.batch_size,self.memory.memory_counter))
+            return
       
-      states, actions, rewards, states_next,is_terminal = self.memory.sample_batch(self.batch_size)
-      non_terminal = np.where(is_terminal==1,0,1)
- 
-      choose_nn1=False
-      if np.random.random()<0.5:
-        choose_nn1=True     
-      if choose_nn1:
-          self.train2nn(self.q_eval1,self.q_eval2,states, actions, rewards, states_next,non_terminal)
-          return                   
-      self.train2nn(self.q_eval2,self.q_eval1,states, actions, rewards, states_next,non_terminal)
+        states, actions, rewards, states_next,is_terminal = self.memory.sample_batch(self.batch_size)
+        non_terminal = np.where(is_terminal==1,0,1)
+    
+        choose_nn1=False
+        if np.random.random()<0.5:
+            choose_nn1=True     
+        if choose_nn1:
+            self.train2nn(self.q_eval1,self.q_eval2,states, actions, rewards, states_next,non_terminal)
+            return                   
+        self.train2nn(self.q_eval2,self.q_eval1,states, actions, rewards, states_next,non_terminal)
+
+def train_step(agent: RLModel, envir):
+    observation = envir.reset()
+    done = False
+    score = 0
+    steps_counter = 0
+    while not done:
+        action_idx,action = agent.choose_action(observation)
+        next_observation, reward, done, info = envir.step(action)
+        steps_counter += 1
+        reward = change_reward(reward)
+        score += reward
+        # memory
+        agent.save_transition(observation, action_idx, action, reward,
+                              next_observation, done)
+        agent.learn()
+        observation = next_observation
+    return score
+    # ...
+
+
+def train_loop(agent: RLModel, episodes: int, envir) -> None:
+    score_history = []
+    average_history = []
+    max_score = float('-inf')
+    max_average = float('-inf')
+    logger.info(f'start train loop for agent {agent.get_name()}')
+
+    for episode_idx in range(episodes):
+        score = train_step(agent, envir)
+        agent.calculate_epsilon()
+        score_history.append(score)
+        avg_score = np.mean(score_history[-100:])
+        average_history.append(avg_score)
+
+        if average_history[-1] > max_average:
+            logger.info(f'Saving weights')
+            agent.save()
+        
+        max_score = max(max_score, score)
+        max_average = max(max_average, avg_score)
+
+        if avg_score > 0:
+            agent.calculate_lr()
+
+        logger.info(
+            'episode {0} score {1} avg_score {2} max_score {3} epsilon {4}'\
+                .format(episode_idx, score, avg_score, max_score, agent.epsilon))
+        PlotModel(episode_idx, score_history, average_history)
+    
+    logger.info("Training is complete")
 
 print("start")
 #ag = dummy_agent()
@@ -705,24 +780,28 @@ mem = ReplayMemory(MEMORY_SIZE, actions_dim, states_dim)
 #train_loop(ag, 2000, env)
 #last one was with eps=0
 
-#logging.info("start ag_no_eps train")
+#logger.info("start ag_no_eps train")
 #train_loop(ag_no_eps, 2000, env)
-#logging.info("done with ag_no_eps train")
+#logger.info("done with ag_no_eps train")
 
-# logging.info("start ag_eps train")
+# logger.info("start ag_eps train")
 # train_loop(ag_eps, 2000, env)
-# logging.info("done with ag_eps train")
+# logger.info("done with ag_eps train")
 #
-# logging.info("start ag_half_eps train")
+# logger.info("start ag_half_eps train")
 # train_loop(ag_half_eps, 2000, env)
-# logging.info("done with ag_half_eps train")
+# logger.info("done with ag_half_eps train")
 # action_discretizationer= Discretizationer(NUM_ACTION_BINS, -1, 1)
 
-ac_agent = ActorCritic(memory=mem,batch_size=BATCH_SIZE,input_len=states_dim, actions_dim=actions_dim, index_to_action=env.index_to_action,
-                        epsilon=EPSILON,epsilon_dec=EPSILON_DEC_RATE,epsilon_end=EPSILON_MIN,alpha=lr_low1,
-                        beta=lr_low2,gamma=GAMMA,clip_value=CLIP_VALUE,layer1_size=LAYER1_SIZE,layer2_size=LAYER2_SIZE)
+if MODEL == ModelType.ACTOR_CRITIC:
+    agent = ActorCritic(memory=mem,batch_size=BATCH_SIZE,input_len=states_dim, actions_dim=actions_dim, index_to_action=env.index_to_action,
+                            epsilon=EPSILON,epsilon_dec=EPSILON_DEC_RATE,epsilon_end=EPSILON_MIN,alpha=lr_low1,
+                            beta=lr_low2,gamma=GAMMA,clip_value=CLIP_VALUE,layer1_size=LAYER1_SIZE,layer2_size=LAYER2_SIZE)
+elif MODEL == ModelType.DDQN:
+    agent = AgentDDQN(lr=lr_low1, gamma=GAMMA, actions_dim=actions_dim, batch_size=BATCH_SIZE, states_dim=states_dim, 
+                            memory=mem, epsilon=EPSILON, epsilon_dec=EPSILON_DEC_RATE, epsilon_end=EPSILON_MIN)
 
-logging.info("start ag_half_eps lr low train")
-train_loop(ac_agent, NUM_EPOCHS, env)
-logging.info("done with ag_half_eps lr low train")
+logger.info("start ag_half_eps lr low train")
+train_loop(agent, NUM_EPOCHS, env)
+logger.info("done with ag_half_eps lr low train")
 
