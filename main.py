@@ -41,16 +41,20 @@ import pylab
 from tensorflow.python.framework.ops import disable_eager_execution
 disable_eager_execution()
 
+class EnvType(str, Enum):
+    LUNAR_LANDER_CONTINUOUS_V2 = 'LunarLanderContinuous-v2'
+    BIPEDAL_WALKER_V3 = 'BipedalWalker-v3'
+
 class ModelType(Enum):
     ACTOR_CRITIC = 1
     DDQN = 2
 
 # When on dry run, no output files are created
-DRY_RUN = True
+DRY_RUN = False
 
 # Run settings
-OPENAI_ENV = 'LunarLanderContinuous-v2' # 'BipedalWalker-v3'
-MODEL = ModelType.DDQN
+OPENAI_ENV = EnvType.LUNAR_LANDER_CONTINUOUS_V2
+MODEL = ModelType.ACTOR_CRITIC
 NUM_EPOCHS = 3000
 MAKE_ACTION_DISCRETE = True
 NUM_ACTION_BINS = [4, 4]
