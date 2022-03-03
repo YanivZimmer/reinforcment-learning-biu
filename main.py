@@ -63,7 +63,7 @@ lr_low2 = 0.00002 #0.25 * LEARNING_RATE
 FIT_EPOCHS = 10
 CLIP_VALUE = 1e-9
 MODIFY_REWARD = False
-MODIFIED_REWARD = -10
+MODIFIED_REWARD = -10 if MODIFY_REWARD else -100
 
 # logger
 date_str = datetime.today().strftime('%d-%m-%Y-%H-%M-%S')
@@ -109,7 +109,7 @@ def PlotModel(episode, scores, averages):
         pylab.title(f'{OPENAI_ENV} PPO training cycle\n\
                         lr actor = {lr_low1}, lr critic = {lr_low2}, epsilon = ({EPSILON},{EPSILON_DEC_RATE},{EPSILON_MIN})\n\
                         layer1 = {LAYER1_SIZE}, layer2 = {LAYER2_SIZE}, action bins = {NUM_ACTION_BINS}, batch = {BATCH_SIZE}\n\
-                        reward = {MODIFIED_REWARD}, fit epoxhs = {FIT_EPOCHS}', fontsize=8)
+                        reward = {MODIFIED_REWARD}, fit epochs = {FIT_EPOCHS}', fontsize=8)
         pylab.ylabel('Score', fontsize=10)
         pylab.xlabel('Steps', fontsize=10)
         try:
