@@ -64,19 +64,24 @@ EPSILON_DEC_RATE = 0.001
 EPSILON_MIN = 0.01
 GAMMA = 0.99
 LEARNING_RATE = 0.00025
-lr_low1 = 0.00002 #0.35 * LEARNING_RATE
-lr_low2 = 0.00002 #0.25 * LEARNING_RATE
+lr_low1 = 0.000005 #0.35 * LEARNING_RATE
+lr_low2 = 0.000005 #0.25 * LEARNING_RATE
 FIT_EPOCHS = 10
 CLIP_VALUE = 1e-9
 MODIFY_REWARD = False
 MODIFIED_REWARD = -10 if MODIFY_REWARD else -100
 
 # Do not explore when using ActorCritic
-if MODEL is not ModelType.ACTOR_CRITIC:
+if MODEL!=ModelType.ACTOR_CRITIC:
+    print("..................DQN..................")
     EPSILON = 1
     EPSILON_DEC_RATE = 0.001
     EPSILON_MIN = 0.01
-
+else:
+    print("..................AC..................")
+    EPSILON = 0
+    EPSILON_DEC_RATE = 0.00
+    EPSILON_MIN = 0.00
 # logger
 date_str = datetime.today().strftime('%d-%m-%Y-%H-%M-%S')
 logging.basicConfig(format='%(asctime)s %(levelname)-8s %(message)s',level=logging.INFO,handlers=[
