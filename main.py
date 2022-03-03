@@ -321,9 +321,11 @@ if MAKE_ACTION_DISCRETE:
 #     return tf.one_hot(indeces, depth)
 
 def change_reward(reward):
-    if MODIFY_REWARD and reward == -100:
-        logging.info(f'Changed reward to {MODIFIED_REWARD}')
-        return MODIFIED_REWARD
+    if reward == -100:
+        logging.info('Failed!')
+        if MODIFY_REWARD:
+            logging.info(f'Changed reward to {MODIFIED_REWARD}')
+            return MODIFIED_REWARD
     return reward
     # if reward>0:
     #     reward=1.5*reward
