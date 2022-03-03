@@ -71,17 +71,14 @@ CLIP_VALUE = 1e-9
 MODIFY_REWARD = False
 MODIFIED_REWARD = -10 if MODIFY_REWARD else -100
 
+print(f'..................{MODEL.name}..................')
+
 # Do not explore when using ActorCritic
-if MODEL!=ModelType.ACTOR_CRITIC:
-    print("..................DQN..................")
-    EPSILON = 1
-    EPSILON_DEC_RATE = 0.001
-    EPSILON_MIN = 0.01
-else:
-    print("..................AC..................")
+if MODEL == ModelType.ACTOR_CRITIC:
     EPSILON = 0
     EPSILON_DEC_RATE = 0.00
     EPSILON_MIN = 0.00
+
 # logger
 date_str = datetime.today().strftime('%d-%m-%Y-%H-%M-%S')
 logging.basicConfig(format='%(asctime)s %(levelname)-8s %(message)s',level=logging.INFO,handlers=[
