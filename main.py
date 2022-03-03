@@ -21,6 +21,7 @@ from pyvirtualdisplay import Display
 from IPython import display as ipythondisplay
 import os
 import copy
+from enum import Enum
 
 os.environ['LANG'] = 'en_US'
 import time
@@ -40,8 +41,13 @@ import pylab
 from tensorflow.python.framework.ops import disable_eager_execution
 disable_eager_execution()
 
+class ModelType(Enum):
+    ACTOR_CRITIC = 1
+    DQN = 2
+
 # Run settings
 OPENAI_ENV = 'LunarLanderContinuous-v2' # 'BipedalWalker-v3'
+MODEL = ModelType.ACTOR_CRITIC
 NUM_EPOCHS = 3000
 MAKE_ACTION_DISCRETE = True
 NUM_ACTION_BINS = [4, 4]
@@ -49,13 +55,13 @@ MAKE_STATE_DISCRETE = False
 NUM_STATE_BINS = 5
 MEMORY_SIZE = 5000
 BATCH_SIZE = 64
-LAYER1_SIZE = 128
-LAYER2_SIZE = 64
+LAYER1_SIZE = 64
+LAYER2_SIZE = 32
 LAYER1_ACTIVATION = 'tanh' #'relu'
 LAYER2_ACTIVATION = 'tanh' #'relu'
-EPSILON = 0
+EPSILON = 1
 EPSILON_DEC_RATE = 0.001
-EPSILON_MIN = 0
+EPSILON_MIN = 0.01
 GAMMA = 0.99
 LEARNING_RATE = 0.00025
 lr_low1 = 0.00002 #0.35 * LEARNING_RATE
@@ -64,6 +70,12 @@ FIT_EPOCHS = 10
 CLIP_VALUE = 1e-9
 MODIFY_REWARD = False
 MODIFIED_REWARD = -10 if MODIFY_REWARD else -100
+
+# Do not explore when using ActorCritic
+if MODEL is not ModelType.ACTOR_CRITIC:
+    EPSILON = 1
+    EPSILON_DEC_RATE = 0.001
+    EPSILON_MIN = 0.01
 
 # logger
 date_str = datetime.today().strftime('%d-%m-%Y-%H-%M-%S')
