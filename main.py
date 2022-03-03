@@ -55,13 +55,13 @@ DRY_RUN = False
 # Run settings
 OPENAI_ENV = EnvType.LUNAR_LANDER_CONTINUOUS_V2
 MODEL = ModelType.ACTOR_CRITIC
-NUM_EPOCHS = 3000
+NUM_EPOCHS = 5000
 MAKE_ACTION_DISCRETE = True
 NUM_ACTION_BINS = [4, 4]
 MAKE_STATE_DISCRETE = False
 NUM_STATE_BINS = 5
-MEMORY_SIZE = 5000
-BATCH_SIZE = 64
+MEMORY_SIZE = 500000
+BATCH_SIZE = 100
 LAYER1_SIZE = 64
 LAYER2_SIZE = 32
 LAYER1_ACTIVATION = 'tanh' #'relu'
@@ -70,7 +70,7 @@ EPSILON = 1
 EPSILON_DEC_RATE = 0.001
 EPSILON_MIN = 0.01
 GAMMA = 0.99
-LEARNING_RATE = 0.00025
+LEARNING_RATE = 0.00001
 lr_low1 = 0.000005 #0.35 * LEARNING_RATE
 lr_low2 = 0.000005 #0.25 * LEARNING_RATE
 FIT_EPOCHS = 10
@@ -139,7 +139,7 @@ def PlotModel(episode, scores, averages):
         pylab.plot(episodes, scores, 'b')
         pylab.plot(episodes, averages, 'r')
         pylab.title(f'{OPENAI_ENV} PPO training cycle\n\
-                        lr actor = {lr_low1}, lr critic = {lr_low2}, epsilon = ({EPSILON},{EPSILON_DEC_RATE},{EPSILON_MIN})\n\
+                        lr = {LEARNING_RATE}, lr1 = {lr_low1}, lr2 = {lr_low2}, epsilon = ({EPSILON},{EPSILON_DEC_RATE},{EPSILON_MIN})\n\
                         layer1 = {LAYER1_SIZE}, layer2 = {LAYER2_SIZE}, action bins = {NUM_ACTION_BINS}, batch = {BATCH_SIZE}\n\
                         reward = {MODIFIED_REWARD}, fit epochs = {FIT_EPOCHS}, memory = {MEMORY_SIZE}', fontsize=8)
         pylab.ylabel('Score', fontsize=10)
@@ -822,7 +822,7 @@ if MODEL == ModelType.ACTOR_CRITIC:
                             epsilon=EPSILON,epsilon_dec=EPSILON_DEC_RATE,epsilon_end=EPSILON_MIN,alpha=lr_low1,
                             beta=lr_low2,gamma=GAMMA,clip_value=CLIP_VALUE,layer1_size=LAYER1_SIZE,layer2_size=LAYER2_SIZE)
 elif MODEL == ModelType.DDQN:
-    agent = AgentDDQN(lr=lr_low1, gamma=GAMMA, actions_dim=actions_dim, index_to_action=env.index_to_action, batch_size=BATCH_SIZE,
+    agent = AgentDDQN(lr=LEARNING_RATE, gamma=GAMMA, actions_dim=actions_dim, index_to_action=env.index_to_action, batch_size=BATCH_SIZE,
                         states_dim=states_dim, memory=mem, epsilon=EPSILON, epsilon_dec=EPSILON_DEC_RATE, epsilon_end=EPSILON_MIN)
 
 logging.info("start ag_half_eps lr low train")
