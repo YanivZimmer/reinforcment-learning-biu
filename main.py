@@ -50,11 +50,11 @@ class ModelType(Enum):
     DDQN = 2
 
 # When on dry run, no output files are created
-DRY_RUN = False
+DRY_RUN = True
 
 # Run settings
 OPENAI_ENV = EnvType.LUNAR_LANDER_CONTINUOUS_V2
-MODEL = ModelType.ACTOR_CRITIC
+MODEL = ModelType.DDQN
 NUM_EPOCHS = 5000
 MAKE_ACTION_DISCRETE = True
 NUM_ACTION_BINS = [4, 4]
@@ -130,8 +130,8 @@ def wrap_env(env):
     return env
 
 def PlotModel(episode, scores, averages):
-    if DRY_RUN:
-        return
+    # if DRY_RUN:
+    #     return
 
     episodes = [i for i in range(0, episode + 1)]
 
@@ -640,8 +640,8 @@ class AgentDDQN(RLModel):
     def _build_dqn(self, lr, number_actions, state_dim):
         model = keras.Sequential([
             keras.layers.Dense(state_dim, activation='relu'),
-            keras.layers.Dense(128, activation='tanh'),
             keras.layers.Dense(64, activation='tanh'),
+            keras.layers.Dense(32, activation='tanh'),
             keras.layers.Dense(number_actions, activation=None)
         ])
         model.compile(optimizer=Adam(learning_rate=lr),loss='mean_squared_error')
@@ -703,22 +703,33 @@ class AgentDDQN(RLModel):
         # action_values = np.array(self.num_actions, dtype=np.int32)
         # action_indices = np.dot(actions, action_values)
         # print(f'action_indices: {action_indices}')
-
-        q_eval = nn1.predict(states)
-        q_next = nn2.predict(states_next)
+        #TODO -dont use hard coded 16!
+        q_eval = np.concatenate(nn1.predict(states)).reshape(BATCH_SIZE,16)
+        q_next = np.concatenate(nn2.predict(states_next)).reshape(BATCH_SIZE,16)
+        #q_eval=np.stack(q_eval)
+        #q_next=np.stack(q_next)
         q_target = np.copy(q_eval)
         batch_idx = np.arange(self.batch_size, dtype=np.int32)
-        print(f'rewards: {rewards}')
-        print(f'gamma: {self.gamma}')
-        print(f'q_next: {q_next}')
-        print(f'non_terminal: {non_terminal}')
+        # print(f'rewards: {rewards}')
+        # print(f'gamma: {self.gamma}')
+        # print(f'q_next: {q_next} ,shape:{q_next.shape}')
+        # temp1=np.max(q_next, axis=1)
+        # print(f'np.max(q_next, axis=1): {temp1} ,shape:{temp1.shape}')
+        # temp0=np.max(q_next, axis=0)
+        # print(f'np.max(q_next, axis=0): {temp0} ,shape:{temp0.shape}')
+        # print(f'non_terminal: {non_terminal}')
         # print(f'actions: {actions}')
-        print(rewards.shape)
-        print((np.max(q_next, axis=1) * non_terminal).shape)
-        print((self.gamma * np.max(q_next, axis=1)).shape)
-        print((self.gamma * np.max(q_next, axis=1) * non_terminal).shape)
-        print((rewards + self.gamma * np.max(q_next, axis=1) * non_terminal).shape)
-        q_target[batch_idx, actions] = rewards + self.gamma * np.max(q_next, axis=1) * non_terminal
+        # print(rewards.shape)
+        # print((np.max(q_next, axis=1) * non_terminal).shape)
+        # print((self.gamma * np.max(q_next, axis=1)).shape)
+        # print((self.gamma * np.max(q_next, axis=1) * non_terminal).shape)
+        # print((rewards + self.gamma * np.max(q_next, axis=1) * non_terminal).shape)
+        tempa = rewards + self.gamma * np.max(q_next, axis=1) * non_terminal
+        # print(f'tempa: {tempa}')
+        # print(f'q_target:{q_target}')
+        for b_idx in batch_idx:
+            # print(f'b_idx: {b_idx}')
+            q_target[b_idx][actions]=tempa[b_idx]
         nn1.train_on_batch(states, q_target)
 
     def learn(self):
