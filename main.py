@@ -30,7 +30,7 @@ import logging
 from tensorflow.keras.layers import Dense
 from gym.wrappers.time_limit import TimeLimit
 from tensorflow.keras import backend as Keras
-from tensorflow.keras.layers import Dense, Input
+from tensorflow.keras.layers import Dense, Input, Activation
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
 import numpy as np
@@ -48,32 +48,34 @@ class EnvType(str, Enum):
 class ModelType(Enum):
     ACTOR_CRITIC = 1
     DDQN = 2
+    DQN = 3
 
 # When on dry run, no output files are created
 DRY_RUN = True
 
 # Run settings
 OPENAI_ENV = EnvType.LUNAR_LANDER_CONTINUOUS_V2
-MODEL = ModelType.DDQN
+MODEL = ModelType.DQN
 NUM_EPOCHS = 5000
 MAKE_ACTION_DISCRETE = True
 NUM_ACTION_BINS = [4, 4]
 MAKE_STATE_DISCRETE = False
 NUM_STATE_BINS = 5
 MEMORY_SIZE = 500000
-BATCH_SIZE = 100
-LAYER1_SIZE = 64
-LAYER2_SIZE = 32
+BATCH_SIZE = 1024
+LAYER1_SIZE = 128
+LAYER2_SIZE = 64
 LAYER1_ACTIVATION = 'tanh' #'relu'
 LAYER2_ACTIVATION = 'tanh' #'relu'
 EPSILON = 1
-EPSILON_DEC_RATE = 0.001
+# prev was EPSILON_DEC_RATE = 0.99
+EPSILON_DEC_RATE = 0.998
 EPSILON_MIN = 0.01
 GAMMA = 0.99
 LEARNING_RATE = 0.00001
 lr_low1 = 0.000005 #0.35 * LEARNING_RATE
 lr_low2 = 0.000005 #0.25 * LEARNING_RATE
-FIT_EPOCHS = 10
+FIT_EPOCHS = 1
 CLIP_VALUE = 1e-9
 MODIFY_REWARD = False
 MODIFIED_REWARD = -10 if MODIFY_REWARD else -100
@@ -138,7 +140,7 @@ def PlotModel(episode, scores, averages):
     if str(episode)[-1:] == "0":# much faster than episode % 100
         pylab.plot(episodes, scores, 'b')
         pylab.plot(episodes, averages, 'r')
-        pylab.title(f'{OPENAI_ENV} PPO training cycle\n\
+        pylab.title(f'{OPENAI_ENV} PPO training cycle {MODEL.name}\n\
                         lr = {LEARNING_RATE}, lr1 = {lr_low1}, lr2 = {lr_low2}, epsilon = ({EPSILON},{EPSILON_DEC_RATE},{EPSILON_MIN})\n\
                         layer1 = {LAYER1_SIZE}, layer2 = {LAYER2_SIZE}, action bins = {NUM_ACTION_BINS}, batch = {BATCH_SIZE}\n\
                         reward = {MODIFIED_REWARD}, fit epochs = {FIT_EPOCHS}, memory = {MEMORY_SIZE}', fontsize=8)
@@ -146,7 +148,7 @@ def PlotModel(episode, scores, averages):
         pylab.xlabel('Steps', fontsize=10)
         try:
             pylab.grid(True)
-            pylab.savefig(f'plots/{OPENAI_ENV}-{date_str}.png')
+            pylab.savefig(f'plots/{OPENAI_ENV}_{MODEL.name}-{date_str}.png')
         except OSError:
             pass
 
@@ -369,6 +371,9 @@ class ReplayMemory:
         self.is_terminal = np.zeros(self.memory_size, dtype=np.int32)
 
     def save_transition(self, state, action_idx, action, reward, state_next, is_terminal):
+        if self.memory_counter > self.memory_size:
+            logging.info(f"Memory reached its limit- overriding previous operations."
+                         f" memory_counter={self.memory_counter} memory_size={self.memory_size}")
         idx = self.memory_counter % self.memory_size
         self.states[idx] = state
         self.states_next[idx] = state_next
@@ -478,8 +483,16 @@ class ActorCritic(RLModel):
         self.clip_value = clip_value
         # self.episode = 0
         # self.num_actions = np.prod(NUM_ACTION_BINS) #np.power(NUM_ACTION_BINS, actions_dim)
+        self.beta=beta
+        self.alpha=alpha
         self.actor, self.critic, self.policy = self.create_network(layer1_size = layer1_size, layer2_size = layer2_size,
                                                                     num_actions = self.num_actions, alpha = alpha, beta = beta)
+    def calculate_lr(self):
+        print("lr to 0.95*lr")
+        self.alpha=0.95*self.alpha
+        self.beta=0.95*self.beta
+        K.set_value(self.actor.optimizer.learning_rate,self.alpha )
+        K.set_value(self.critic.optimizer.learning_rate,self.beta )
 
     def critic_ppo_loss(self,values):
         def loss(y_true,y_pred):
@@ -618,6 +631,82 @@ class ActorCritic(RLModel):
         self.critic.fit(states, target, verbose=0, epochs=FIT_EPOCHS, batch_size=self.batch_size)
         self.actor.fit([states, delta], actions_idx, epochs=FIT_EPOCHS, verbose=0, batch_size=self.batch_size)
 
+class AgentDQN(RLModel):
+    def __init__(self, lr, gamma, actions_dim, index_to_action: Function, batch_size, states_dim, memory: ReplayMemory,
+               epsilon, epsilon_dec=1e-3, epsilon_end=0.01,
+                fname='dqn_model.h5'):
+        super().__init__(memory, batch_size, states_dim, actions_dim, index_to_action,
+                            epsilon, epsilon_dec, epsilon_end, gamma)
+        self.model_file = fname
+        self.lr=lr
+        #   self.memory = Memory
+        self.num_actions = np.prod(NUM_ACTION_BINS)
+        self.q_eval = self._build_dqn(lr, self.num_actions, states_dim)
+        self.action_space = [i for i in range(self.num_actions)]
+    def get_name(self):
+        return "Vanila Deep Q Network"
+
+    def _build_dqn(self,lr,num_actions,states_dim):
+        model = keras.Sequential([
+            Dense(LAYER1_SIZE, input_shape=(states_dim,)),
+            Activation('relu'),
+            Dense(LAYER2_SIZE),
+            Activation('relu'),
+            Dense(num_actions)])
+
+        model.compile(optimizer=Adam(lr=lr), loss='mse')
+        return model
+    def choose_action(self, state):
+        state = state[np.newaxis, :]
+        rand = np.random.random()
+        if rand < self.epsilon:
+            action_idx = np.random.choice(self.action_space)
+        else:
+            actions = self.q_eval.predict(state)
+            action_idx = np.argmax(actions)
+        action = self.index_to_action(action_idx)
+        return action_idx, action
+
+    def learn(self):
+        if self.memory.memory_counter > self.batch_size:
+            state,action_idx, _, reward, new_state, is_terminal = \
+                                          self.memory.sample_batch(self.batch_size)
+
+            #action = tf.one_hot(action_idx,self.num_actions)
+            action_values = np.array(self.action_space, dtype=np.int8)
+            action_indices = np.dot(action_idx, action_values)
+            non_terminal = np.where(is_terminal == 1, 0, 1)
+
+            q_eval = self.q_eval.predict(state)
+
+            q_next = self.q_eval.predict(new_state)
+
+            q_target = q_eval.copy()
+
+            batch_index = np.arange(self.batch_size, dtype=np.int32)
+
+            q_target[batch_index, action_indices] = reward + \
+                                  self.gamma*np.max(q_next, axis=1)*non_terminal
+
+            _ = self.q_eval.fit(state, q_target, verbose=0)
+            #_ = self.q_eval.fit(state, q_target,epochs=10, verbose=0)
+
+
+    def calculate_epsilon(self):
+        discount_eps=1
+        self.epsilon = max(self.epsilon *discount_eps * self.epsilon_dec, self.epsilon_end)
+
+    def calculate_lr(self):
+        print("lr to 0.95 * lr")
+        K.set_value(self.q_eval.optimizer.learning_rate, self.lr)
+        # K.set_value(self.q_eval2.optimizer.learning_rate, self.lr)
+    def save_transition(self,state,action_idx,action,reward,state_next,is_terminal):
+        self.memory.save_transition(state,action_idx,action,reward,state_next,is_terminal)
+    def load(self):
+        pass
+    def save(self):
+        pass
+
 class AgentDDQN(RLModel):
     def __init__(self, lr, gamma, actions_dim, index_to_action: Function, batch_size, states_dim, memory: ReplayMemory,
                epsilon, epsilon_dec=1e-3, epsilon_end=0.01,
@@ -640,12 +729,13 @@ class AgentDDQN(RLModel):
     def _build_dqn(self, lr, number_actions, state_dim):
         model = keras.Sequential([
             keras.layers.Dense(state_dim, activation='relu'),
-            keras.layers.Dense(64, activation='tanh'),
-            keras.layers.Dense(32, activation='tanh'),
+            keras.layers.Dense(LAYER1_SIZE, activation='tanh'),
+            keras.layers.Dense(LAYER2_SIZE, activation='tanh'),
             keras.layers.Dense(number_actions, activation=None)
         ])
         model.compile(optimizer=Adam(learning_rate=lr),loss='mean_squared_error')
-        #model.summary()
+        #model.build((state_dim,1))
+        #print(model.summary())
         return model
     
     def get_name(self):
@@ -656,11 +746,7 @@ class AgentDDQN(RLModel):
 
     def calculate_epsilon(self):
         discount_eps=1
-        if self.epsilon <4*self.epsilon_end:
-            discount_eps=0.25
-        if self.epsilon <2*self.epsilon_end:
-            discount_eps=0.025
-        self.epsilon = max(self.epsilon - discount_eps * self.epsilon_dec, self.epsilon_end)
+        self.epsilon = max(self.epsilon * self.epsilon_dec, self.epsilon_end)
     
     def calculate_lr(self):
         print("lr to 0.95 * lr")
@@ -724,13 +810,14 @@ class AgentDDQN(RLModel):
         # print((self.gamma * np.max(q_next, axis=1)).shape)
         # print((self.gamma * np.max(q_next, axis=1) * non_terminal).shape)
         # print((rewards + self.gamma * np.max(q_next, axis=1) * non_terminal).shape)
+        var=np.max(q_next, axis=1) 
         tempa = rewards + self.gamma * np.max(q_next, axis=1) * non_terminal
         # print(f'tempa: {tempa}')
         # print(f'q_target:{q_target}')
         for b_idx in batch_idx:
             # print(f'b_idx: {b_idx}')
             q_target[b_idx][actions]=tempa[b_idx]
-        nn1.train_on_batch(states, q_target)
+        nn1.fit(states, q_target)
 
     def learn(self):
         if self.memory.memory_counter<self.batch_size:
@@ -786,12 +873,16 @@ def train_loop(agent: RLModel, episodes: int, envir) -> None:
         if average_history[-1] > max_average:
             logging.info(f'Saving weights')
             agent.save()
-        
+        #increase batch size when there are many more actions in the memory
+        if episode_idx % 250 == 0 and episode_idx > 400:
+            agent.batch_size = 2 * agent.batch_size
+            logging.info("Increase batch size by factor of 2")
+        if (episode_idx%100 == 0 and episode_idx > 400) or (score > 100 and score > max_score) or episode_idx==20:
+            agent.calculate_lr()
+
         max_score = max(max_score, score)
         max_average = max(max_average, avg_score)
 
-        if avg_score > 0:
-            agent.calculate_lr()
 
         logging.info(
             'episode {0} score {1} avg_score {2} max_score {3} epsilon {4}'\
@@ -834,6 +925,9 @@ if MODEL == ModelType.ACTOR_CRITIC:
                             beta=lr_low2,gamma=GAMMA,clip_value=CLIP_VALUE,layer1_size=LAYER1_SIZE,layer2_size=LAYER2_SIZE)
 elif MODEL == ModelType.DDQN:
     agent = AgentDDQN(lr=LEARNING_RATE, gamma=GAMMA, actions_dim=actions_dim, index_to_action=env.index_to_action, batch_size=BATCH_SIZE,
+                        states_dim=states_dim, memory=mem, epsilon=EPSILON, epsilon_dec=EPSILON_DEC_RATE, epsilon_end=EPSILON_MIN)
+elif MODEL == ModelType.DQN:
+    agent = AgentDQN(lr=LEARNING_RATE, gamma=GAMMA, actions_dim=actions_dim, index_to_action=env.index_to_action, batch_size=BATCH_SIZE,
                         states_dim=states_dim, memory=mem, epsilon=EPSILON, epsilon_dec=EPSILON_DEC_RATE, epsilon_end=EPSILON_MIN)
 
 logging.info("start ag_half_eps lr low train")
