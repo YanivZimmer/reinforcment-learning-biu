@@ -50,35 +50,50 @@ class ModelType(Enum):
     DDQN = 2
     DQN = 3
 
+class LossType(Enum):
+    MSE = 'mean_squared_error'
+    CUSTOM = 'custom'
+
+class ActivationType(Enum):
+    RELU = 'relu'
+    TANH = 'tanh'
+
+# Constants
+TRMINATE_REWARD = -100
+
 # When on dry run, no output files are created
-DRY_RUN = True
+DRY_RUN = False
 
 # Run settings
 OPENAI_ENV = EnvType.LUNAR_LANDER_CONTINUOUS_V2
-MODEL = ModelType.DQN
+MODEL = ModelType.ACTOR_CRITIC
 NUM_EPOCHS = 5000
 MAKE_ACTION_DISCRETE = True
-NUM_ACTION_BINS = [4, 4]
+NUM_ACTION_BINS = [4, 5]
 MAKE_STATE_DISCRETE = False
 NUM_STATE_BINS = 5
 MEMORY_SIZE = 500000
 BATCH_SIZE = 1024
-LAYER1_SIZE = 128
-LAYER2_SIZE = 64
-LAYER1_ACTIVATION = 'tanh' #'relu'
-LAYER2_ACTIVATION = 'tanh' #'relu'
+LAYER1_SIZE = 512
+LAYER2_SIZE = 256
+LAYER1_ACTIVATION = ActivationType.RELU.name
+LAYER2_ACTIVATION = ActivationType.RELU.name
+LAYER1_LOSS = LossType.CUSTOM.name
+LAYER2_LOSS = LossType.MSE.name
 EPSILON = 1
 # prev was EPSILON_DEC_RATE = 0.99
 EPSILON_DEC_RATE = 0.998
 EPSILON_MIN = 0.01
 GAMMA = 0.99
 LEARNING_RATE = 0.00001
+LEARNING_RATE_DEC_RATE = 0.99
 lr_low1 = 0.000005 #0.35 * LEARNING_RATE
 lr_low2 = 0.000005 #0.25 * LEARNING_RATE
 FIT_EPOCHS = 1
 CLIP_VALUE = 1e-9
-MODIFY_REWARD = False
-MODIFIED_REWARD = -10 if MODIFY_REWARD else -100
+MODIFY_REWARD = True
+ENV_APPLY_TIME_LIMIT = False
+MODIFIED_REWARD = -10 if MODIFY_REWARD else TRMINATE_REWARD
 
 print(f'..................{MODEL.name}..................')
 
@@ -142,8 +157,8 @@ def PlotModel(episode, scores, averages):
         pylab.plot(episodes, averages, 'r')
         pylab.title(f'{OPENAI_ENV} PPO training cycle {MODEL.name}\n\
                         lr = {LEARNING_RATE}, lr1 = {lr_low1}, lr2 = {lr_low2}, epsilon = ({EPSILON},{EPSILON_DEC_RATE},{EPSILON_MIN})\n\
-                        layer1 = {LAYER1_SIZE}, layer2 = {LAYER2_SIZE}, action bins = {NUM_ACTION_BINS}, batch = {BATCH_SIZE}\n\
-                        reward = {MODIFIED_REWARD}, fit epochs = {FIT_EPOCHS}, memory = {MEMORY_SIZE}', fontsize=8)
+                        layer1 = {LAYER1_SIZE}, layer2 = {LAYER2_SIZE}, action bins = {NUM_ACTION_BINS}, batch = {BATCH_SIZE}, reward = {MODIFIED_REWARD}, fit epochs = {FIT_EPOCHS}\n\
+                        memory = {MEMORY_SIZE}, layer1 loss = {LAYER1_LOSS}, layer2 loss = {LAYER2_LOSS}', fontsize=8)
         pylab.ylabel('Score', fontsize=10)
         pylab.xlabel('Steps', fontsize=10)
         try:
@@ -488,11 +503,11 @@ class ActorCritic(RLModel):
         self.actor, self.critic, self.policy = self.create_network(layer1_size = layer1_size, layer2_size = layer2_size,
                                                                     num_actions = self.num_actions, alpha = alpha, beta = beta)
     def calculate_lr(self):
-        print("lr to 0.95*lr")
-        self.alpha=0.95*self.alpha
-        self.beta=0.95*self.beta
-        K.set_value(self.actor.optimizer.learning_rate,self.alpha )
-        K.set_value(self.critic.optimizer.learning_rate,self.beta )
+        print(f'lr to {LEARNING_RATE_DEC_RATE} * lr')
+        self.alpha = LEARNING_RATE_DEC_RATE * self.alpha
+        self.beta = LEARNING_RATE_DEC_RATE * self.beta
+        K.set_value(self.actor.optimizer.learning_rate, self.alpha)
+        K.set_value(self.critic.optimizer.learning_rate, self.beta)
 
     def critic_ppo_loss(self,values):
         def loss(y_true,y_pred):
@@ -556,9 +571,14 @@ class ActorCritic(RLModel):
             return loss
 
         actor = Model([input, delta], [probabilities])
-        actor.compile(optimizer=Adam(lr=alpha), loss=custom_loss)
+
+        loss = LAYER1_LOSS
+        if loss == LossType.CUSTOM.name:
+            loss = custom_loss
+        
+        actor.compile(optimizer=Adam(lr=alpha), loss=loss)
         critic = Model([input], [values])
-        critic.compile(optimizer=Adam(lr=beta), loss='mean_squared_error')
+        critic.compile(optimizer=Adam(lr=beta), loss=LAYER2_LOSS)
         policy = Model([input], [probabilities])
         return actor, critic, policy
 
@@ -697,7 +717,7 @@ class AgentDQN(RLModel):
         self.epsilon = max(self.epsilon *discount_eps * self.epsilon_dec, self.epsilon_end)
 
     def calculate_lr(self):
-        print("lr to 0.95 * lr")
+        print(f'lr to {LEARNING_RATE_DEC_RATE} * lr')
         K.set_value(self.q_eval.optimizer.learning_rate, self.lr)
         # K.set_value(self.q_eval2.optimizer.learning_rate, self.lr)
     def save_transition(self,state,action_idx,action,reward,state_next,is_terminal):
@@ -749,8 +769,8 @@ class AgentDDQN(RLModel):
         self.epsilon = max(self.epsilon * self.epsilon_dec, self.epsilon_end)
     
     def calculate_lr(self):
-        print("lr to 0.95 * lr")
-        self.lr = 0.95 * self.lr
+        print(f'lr to {LEARNING_RATE_DEC_RATE} * lr')
+        self.lr = LEARNING_RATE_DEC_RATE * self.lr
         K.set_value(self.q_eval1.optimizer.learning_rate, self.lr)
         K.set_value(self.q_eval2.optimizer.learning_rate, self.lr)
 
@@ -845,8 +865,18 @@ def train_step(agent: RLModel, envir):
         action_idx, action = agent.choose_action(observation)
         next_observation, reward, done, info = envir.step(action)
         steps_counter += 1
+
+        # Check if should limit env time
+        if not ENV_APPLY_TIME_LIMIT:
+            done = False
+        
+        # If got reward for failure
+        if reward == TRMINATE_REWARD:
+            done = True
+
         reward = change_reward(reward)
         score += reward
+
         # memory
         agent.save_transition(observation, action_idx, action, reward,
                               next_observation, done)
