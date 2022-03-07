@@ -60,6 +60,7 @@ class ActivationType(Enum):
 
 # Constants
 TRMINATE_REWARD = -100
+SUCCESS_REWARD = 200
 
 # When on dry run, no output files are created
 DRY_RUN = False
@@ -76,10 +77,10 @@ MEMORY_SIZE = 500000
 BATCH_SIZE = 1024
 LAYER1_SIZE = 512
 LAYER2_SIZE = 256
-LAYER1_ACTIVATION = ActivationType.RELU.name
-LAYER2_ACTIVATION = ActivationType.RELU.name
-LAYER1_LOSS = LossType.CUSTOM.name
-LAYER2_LOSS = LossType.MSE.name
+LAYER1_ACTIVATION = ActivationType.RELU.value
+LAYER2_ACTIVATION = ActivationType.RELU.value
+LAYER1_LOSS = LossType.CUSTOM.value
+LAYER2_LOSS = LossType.MSE.value
 EPSILON = 1
 # prev was EPSILON_DEC_RATE = 0.99
 EPSILON_DEC_RATE = 0.998
@@ -89,7 +90,7 @@ LEARNING_RATE = 0.00001
 LEARNING_RATE_DEC_RATE = 0.99
 lr_low1 = 0.000005 #0.35 * LEARNING_RATE
 lr_low2 = 0.000005 #0.25 * LEARNING_RATE
-FIT_EPOCHS = 1
+FIT_EPOCHS = 10
 CLIP_VALUE = 1e-9
 MODIFY_REWARD = True
 ENV_APPLY_TIME_LIMIT = False
@@ -358,7 +359,7 @@ if MAKE_ACTION_DISCRETE:
 #     return tf.one_hot(indeces, depth)
 
 def change_reward(reward):
-    if reward == -100:
+    if reward == TRMINATE_REWARD:
         logging.info('Failed!')
         if MODIFY_REWARD:
             logging.info(f'Changed reward to {MODIFIED_REWARD}')
@@ -573,7 +574,7 @@ class ActorCritic(RLModel):
         actor = Model([input, delta], [probabilities])
 
         loss = LAYER1_LOSS
-        if loss == LossType.CUSTOM.name:
+        if loss == LossType.CUSTOM.value:
             loss = custom_loss
         
         actor.compile(optimizer=Adam(lr=alpha), loss=loss)
@@ -870,8 +871,8 @@ def train_step(agent: RLModel, envir):
         if not ENV_APPLY_TIME_LIMIT:
             done = False
         
-        # If got reward for failure
-        if reward == TRMINATE_REWARD:
+        # If got reward for failure or success
+        if reward == TRMINATE_REWARD or reward == SUCCESS_REWARD:
             done = True
 
         reward = change_reward(reward)
