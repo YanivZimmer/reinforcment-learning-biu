@@ -63,7 +63,7 @@ class ActivationType(Enum):
 # Constants
 TRMINATE_REWARD = -100
 SUCCESS_REWARD = 200
-
+UPDATE_SECOND_NET_INTERVAL=100
 # When on dry run, no output files are created
 DRY_RUN = False
 
@@ -90,6 +90,7 @@ EPSILON_MIN = 0.01
 GAMMA = 0.99
 LEARNING_RATE = 0.00001
 LEARNING_RATE_DEC_RATE = 0.99
+LR_DISCOUNT=0.99
 lr_low1 = 0.000005 #0.35 * LEARNING_RATE
 lr_low2 = 0.000005 #0.25 * LEARNING_RATE
 FIT_EPOCHS = 10
@@ -867,6 +868,100 @@ class AgentDQN(RLModel):
         pass
     def save(self):
         pass
+
+
+class AgentDDQNT(RLModel):
+    def __init__(self, lr, gamma, actions_dim, index_to_action: Function, batch_size, states_dim, memory: ReplayMemory,
+                 epsilon, epsilon_dec=1e-3, epsilon_end=0.01,
+                 fname='dqn_model.h5'):
+        super().__init__(memory, batch_size, states_dim, actions_dim, index_to_action,
+                         epsilon, epsilon_dec, epsilon_end, gamma)
+        self.model_file = fname
+        self.lr = lr
+        self.num_actions = np.prod(NUM_ACTION_BINS)
+        self.action_space = [i for i in range(self.num_actions)]
+        self.q_eval = self._build_dqn(lr, self.num_actions, states_dim)
+        self.q_target = self._build_dqn(lr, self.num_actions, states_dim)
+        self.update_second_net_interval = UPDATE_SECOND_NET_INTERVAL
+
+    def _build_dqn(self, lr, number_actions, state_dim):
+        model = keras.Sequential([
+            Dense(LAYER1_SIZE, input_shape=(state_dim,)),
+            Activation('relu'),
+            Dense(LAYER2_SIZE),
+            Activation('relu'),
+            Dense(number_actions)])
+
+        model.compile(optimizer=Adam(lr=lr), loss='mse')
+        return model
+
+    def get_name(self):
+        return "Double Deep Q Network T"
+
+    def save_transition(self, state, action_idx, action, reward, state_next, is_terminal):
+        self.memory.save_transition(state, action_idx, action, reward, state_next, is_terminal)
+
+    def calculate_epsilon(self):
+        discount_eps = 1
+        self.epsilon = max(self.epsilon * self.epsilon_dec, self.epsilon_end)
+
+    def calculate_lr(self):
+        self.lr = LR_DISCOUNT * self.lr
+        logging.info(f'lr to {LR_DISCOUNT} * lr ={self.lr}')
+        K.set_value(self.q_eval.optimizer.learning_rate, self.lr)
+
+    def _get_q_eval_weight_file_name(self, layer_num):
+        return f'weights/{OPENAI_ENV}-eval{layer_num}-{date_str}'
+
+    def save(self):
+        if DRY_RUN:
+            return
+
+        self.q_eval.save_weights(self._get_q_eval_weight_file_name(1), overwrite=True)
+
+    def _choose_action_index(self, observation):
+        if np.random.random() < self.epsilon:
+            return np.random.choice(self.num_actions)
+
+        q = self.q_eval.predict(observation)
+        argm = np.argmax(q, axis=1)
+        return argm[0]
+
+    def choose_action(self, state):
+        state = state[np.newaxis, :]
+        action_idx = self._choose_action_index(state)
+        action = self.index_to_action(action_idx)
+        return action_idx, action
+
+    def learn(self):
+        if self.memory.memory_counter < self.batch_size:
+            return
+        states, actions_idx, _, rewards, states_next, is_terminal = self.memory.sample_batch(self.batch_size)
+        non_terminal = np.where(is_terminal == 1, 0, 1)
+
+        action_values = np.array(self.action_space, dtype=np.int8)
+        action_indices = np.dot(actions_idx, action_values)
+
+        q_eval = self.q_eval.predict(states)
+
+        q_next = self.q_target.predict(states_next)
+
+        q_target = q_eval.copy()
+
+        batch_index = np.arange(self.batch_size, dtype=np.int32)
+        max_val = np.max(q_next, axis=1)
+        q_target[batch_index, action_indices] = rewards + \
+                                                self.gamma * max_val * non_terminal
+
+        _ = self.q_eval.fit(states, q_target, verbose=0)
+
+        if self.memory.memory_counter % self.update_second_net_interval == 0:
+            logging.info("updating second net")
+            self.update_second_network()
+
+    def upadate_second_network(self):
+        self.q_target.model.set_weights(self.q_eval.model.get_weights())
+
 
 class AgentDDQN(RLModel):
     def __init__(self, lr, gamma, actions_dim, index_to_action: Function, batch_size, states_dim, memory: ReplayMemory,
