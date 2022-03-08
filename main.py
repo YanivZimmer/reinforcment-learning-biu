@@ -49,6 +49,8 @@ class ModelType(Enum):
     ACTOR_CRITIC = 1
     DDQN = 2
     DQN = 3
+    DDQNT = 4
+    TD3 = 5
 
 class LossType(Enum):
     MSE = 'mean_squared_error'
@@ -67,7 +69,7 @@ DRY_RUN = False
 
 # Run settings
 OPENAI_ENV = EnvType.LUNAR_LANDER_CONTINUOUS_V2
-MODEL = ModelType.ACTOR_CRITIC
+MODEL = ModelType.DQN
 NUM_EPOCHS = 5000
 MAKE_ACTION_DISCRETE = True
 NUM_ACTION_BINS = [4, 5]
@@ -75,8 +77,8 @@ MAKE_STATE_DISCRETE = False
 NUM_STATE_BINS = 5
 MEMORY_SIZE = 500000
 BATCH_SIZE = 1024
-LAYER1_SIZE = 512
-LAYER2_SIZE = 256
+LAYER1_SIZE = 32
+LAYER2_SIZE = 64
 LAYER1_ACTIVATION = ActivationType.RELU.value
 LAYER2_ACTIVATION = ActivationType.RELU.value
 LAYER1_LOSS = LossType.CUSTOM.value
@@ -652,6 +654,133 @@ class ActorCritic(RLModel):
         self.critic.fit(states, target, verbose=0, epochs=FIT_EPOCHS, batch_size=self.batch_size)
         self.actor.fit([states, delta], actions_idx, epochs=FIT_EPOCHS, verbose=0, batch_size=self.batch_size)
 
+
+class ActorCriticTD3(RLModel):
+    def __init__(self, memory, batch_size, input_len, actions_dim, index_to_action: Function, epsilon, epsilon_dec,
+                 epsilon_end,
+                 alpha, beta, gamma, clip_value, layer1_size, layer2_size):
+        super().__init__(memory, batch_size, input_len, actions_dim, index_to_action,
+                         epsilon, epsilon_dec, epsilon_end, gamma)
+        self.clip_value = clip_value
+        self.beta = beta
+        self.alpha = alpha
+        self.actor, self.critic1, self.critic2, self.policy = self.create_network(layer1_size=layer1_size, layer2_size=layer2_size,
+                                                                   num_actions=self.num_actions, alpha=alpha, beta=beta)
+
+    def calculate_lr(self):
+        print(f'lr to {LEARNING_RATE_DEC_RATE} * lr')
+        self.alpha = LEARNING_RATE_DEC_RATE * self.alpha
+        self.beta = LEARNING_RATE_DEC_RATE * self.beta
+        K.set_value(self.actor.optimizer.learning_rate, self.alpha)
+        K.set_value(self.critic.optimizer.learning_rate, self.beta)
+
+    def create_network(self, layer1_size, layer2_size, num_actions, alpha, beta):
+        input = Input(shape=(self.input_length,))
+        # For loss calculation
+        delta = Input(shape=[1])
+        # first_layer = Dense(layer1_size, activation='relu')(input)
+        first_layer = Dense(layer1_size, activation=LAYER1_ACTIVATION, kernel_initializer= \
+            tf.random_normal_initializer(stddev=0.01))(input)
+
+        bn1 = tf.keras.layers.BatchNormalization()(first_layer)
+        # second_layer = Dense(layer2_size, activation='relu')(bn1)
+        second_layer = Dense(layer2_size, activation=LAYER2_ACTIVATION, kernel_initializer= \
+            tf.random_normal_initializer(stddev=0.01))(bn1)
+        bn2 = tf.keras.layers.BatchNormalization()(second_layer)
+        probabilities = Dense(num_actions,
+                              activation='softmax')(bn2)
+        values1 = Dense(1, activation='linear')(bn2)
+        values2 = Dense(1, activation='linear')(bn2)
+
+        def custom_loss(actual, prediction):
+            # We clip values so we dont get 0 or 1 values
+            out = Keras.clip(prediction, 1e-4, 1 - 1e-4)
+            # Calculate log-likelihood
+            likelihood = actual * tf.math.log(out)
+            # likelihood = tf.math.log(prediction)
+            loss = tf.reduce_sum(-likelihood * delta)
+            return loss
+
+        actor = Model([input, delta], [probabilities])
+
+        loss = LAYER1_LOSS
+        if loss == LossType.CUSTOM.value:
+            loss = custom_loss
+
+        actor.compile(optimizer=Adam(lr=alpha), loss=loss)
+        critic1 = Model([input], [values1])
+        critic1.compile(optimizer=Adam(lr=beta), loss=LAYER2_LOSS)
+        critic2 = Model([input], [values2])
+        critic2.compile(optimizer=Adam(lr=beta), loss=LAYER2_LOSS)
+
+        policy = Model([input], [probabilities])
+        return actor, critic1,critic2, policy
+
+    def get_name(self):
+        return "Actor Critic TD3 agent"
+
+    def _get_actor_weight_file_name(self):
+        return f'weights/{OPENAI_ENV}-actor-td3-{date_str}'
+
+    def _get_critic_weight_file_name(self):
+        return f'weights/{OPENAI_ENV}-critic-td3-1-{date_str}'
+
+    def calculate_epsilon(self):
+        self.epsilon = max(self.epsilon - self.epsilon_dec, self.epsilon_end)
+
+    def _choose_action_index(self, observation):
+        if np.random.random() < self.epsilon:
+            return np.random.choice(self.num_actions)
+
+        state = observation[np.newaxis, :]
+        probabilities = self.policy.predict(state)[0]
+        return np.random.choice(range(0, self.num_actions), p=probabilities)
+
+    def save_transition(self, state, action_idx, action, reward, state_next, is_terminal):
+        self.memory.save_transition(state, action_idx, action, reward, state_next, is_terminal)
+
+    def save(self):
+        if DRY_RUN:
+            return
+
+        self.actor.save_weights(self._get_actor_weight_file_name(), overwrite=True)
+        self.critic1.save_weights(self._get_critic_weight_file_name(), overwrite=True)
+
+    def load(self):
+        self.actor.load_weights(self._get_actor_weight_file_name())
+        self.critic1.load_weights(self._get_critic_weight_file_name())
+
+    def learn(self):
+        self.learn_batch()
+
+    def learn_batch(self):
+        if self.memory.memory_counter < self.batch_size:
+            print("Return::batch size bigger than memory counter :batch size={0} memory_counter={1}" \
+                  .format(self.batch_size, self.memory.memory_counter))
+            return
+
+        states, actions_idx, _, rewards, next_states, is_terminal = self.memory.sample_batch(self.batch_size)
+        critic1_next_value = self.critic1.predict(next_states)[:, 0]
+        critic1_value = self.critic1.predict(states)[:, 0]
+        critic2_next_value = self.critic1.predict(next_states)[:, 0]
+        critic2_value = self.critic1.predict(states)[:, 0]
+        #get min critic result for each state
+        critic_min_value=K.minimum(critic1_value,critic2_value)
+        critic_min_next_value=K.minimum(critic1_next_value,critic2_next_value)
+        non_terminal = np.where(is_terminal == 1, 0, 1)
+        # print(f'rewards: {rewards}')
+        # print(f'critic_value: {critic_value}')
+        # print(f'critic_next_value: {critic_next_value}')
+        # print(f'non_terminal: {non_terminal}')
+        # 1 - int(done) = do not take next state into consideration if done
+        target = rewards + self.gamma * critic_min_next_value * non_terminal
+        # print(f'target: {target}')
+        delta = target - critic_min_value
+        # print(f'delta: {delta}')
+        self.critic.fit(states, target, verbose=0, epochs=FIT_EPOCHS, batch_size=self.batch_size)
+        self.actor.fit([states, delta], actions_idx, epochs=FIT_EPOCHS, verbose=0, batch_size=self.batch_size)
+
+
 class AgentDQN(RLModel):
     def __init__(self, lr, gamma, actions_dim, index_to_action: Function, batch_size, states_dim, memory: ReplayMemory,
                epsilon, epsilon_dec=1e-3, epsilon_end=0.01,
@@ -670,6 +799,14 @@ class AgentDQN(RLModel):
     def _build_dqn(self,lr,num_actions,states_dim):
         model = keras.Sequential([
             Dense(LAYER1_SIZE, input_shape=(states_dim,)),
+            Activation('relu'),
+            Dense(LAYER2_SIZE),
+            Activation('relu'),
+            Dense(LAYER2_SIZE),
+            Activation('relu'),
+            Dense(LAYER2_SIZE),
+            Activation('relu'),
+            Dense(LAYER2_SIZE),
             Activation('relu'),
             Dense(LAYER2_SIZE),
             Activation('relu'),
@@ -868,12 +1005,12 @@ def train_step(agent: RLModel, envir):
         steps_counter += 1
 
         # Check if should limit env time
-        if not ENV_APPLY_TIME_LIMIT:
-            done = False
-        
-        # If got reward for failure or success
-        if reward == TRMINATE_REWARD or reward == SUCCESS_REWARD:
-            done = True
+        # if not ENV_APPLY_TIME_LIMIT:
+        #     done = False
+        #
+        # # If got reward for failure or success
+        # if reward == TRMINATE_REWARD or reward == SUCCESS_REWARD:
+        #     done = True
 
         reward = change_reward(reward)
         score += reward
@@ -952,6 +1089,10 @@ mem = ReplayMemory(MEMORY_SIZE, actions_dim, states_dim)
 
 if MODEL == ModelType.ACTOR_CRITIC:
     agent = ActorCritic(memory=mem,batch_size=BATCH_SIZE,input_len=states_dim, actions_dim=actions_dim, index_to_action=env.index_to_action,
+                            epsilon=EPSILON,epsilon_dec=EPSILON_DEC_RATE,epsilon_end=EPSILON_MIN,alpha=lr_low1,
+                            beta=lr_low2,gamma=GAMMA,clip_value=CLIP_VALUE,layer1_size=LAYER1_SIZE,layer2_size=LAYER2_SIZE)
+elif MODEL == ModelType.TD3:
+    agent = ActorCriticTD3(memory=mem,batch_size=BATCH_SIZE,input_len=states_dim, actions_dim=actions_dim, index_to_action=env.index_to_action,
                             epsilon=EPSILON,epsilon_dec=EPSILON_DEC_RATE,epsilon_end=EPSILON_MIN,alpha=lr_low1,
                             beta=lr_low2,gamma=GAMMA,clip_value=CLIP_VALUE,layer1_size=LAYER1_SIZE,layer2_size=LAYER2_SIZE)
 elif MODEL == ModelType.DDQN:
