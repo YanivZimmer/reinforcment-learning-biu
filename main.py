@@ -69,7 +69,7 @@ DRY_RUN = False
 
 # Run settings
 OPENAI_ENV = EnvType.LUNAR_LANDER_CONTINUOUS_V2
-MODEL = ModelType.DQN
+MODEL = ModelType.TD3
 NUM_EPOCHS = 5000
 MAKE_ACTION_DISCRETE = True
 NUM_ACTION_BINS = [4, 5]
@@ -672,7 +672,9 @@ class ActorCriticTD3(RLModel):
         self.alpha = LEARNING_RATE_DEC_RATE * self.alpha
         self.beta = LEARNING_RATE_DEC_RATE * self.beta
         K.set_value(self.actor.optimizer.learning_rate, self.alpha)
-        K.set_value(self.critic.optimizer.learning_rate, self.beta)
+        K.set_value(self.critic1.optimizer.learning_rate, self.beta)
+        K.set_value(self.critic2.optimizer.learning_rate, self.beta)
+
 
     def create_network(self, layer1_size, layer2_size, num_actions, alpha, beta):
         input = Input(shape=(self.input_length,))
@@ -765,8 +767,8 @@ class ActorCriticTD3(RLModel):
         critic2_next_value = self.critic1.predict(next_states)[:, 0]
         critic2_value = self.critic1.predict(states)[:, 0]
         #get min critic result for each state
-        critic_min_value=K.minimum(critic1_value,critic2_value)
-        critic_min_next_value=K.minimum(critic1_next_value,critic2_next_value)
+        critic_min_value=np.minimum(critic1_value,critic2_value)
+        critic_min_next_value=np.minimum(critic1_next_value,critic2_next_value)
         non_terminal = np.where(is_terminal == 1, 0, 1)
         # print(f'rewards: {rewards}')
         # print(f'critic_value: {critic_value}')
@@ -777,7 +779,8 @@ class ActorCriticTD3(RLModel):
         # print(f'target: {target}')
         delta = target - critic_min_value
         # print(f'delta: {delta}')
-        self.critic.fit(states, target, verbose=0, epochs=FIT_EPOCHS, batch_size=self.batch_size)
+        self.critic1.fit(states, target, verbose=0, epochs=FIT_EPOCHS, batch_size=self.batch_size)
+        self.critic2.fit(states, target, verbose=0, epochs=FIT_EPOCHS, batch_size=self.batch_size)
         self.actor.fit([states, delta], actions_idx, epochs=FIT_EPOCHS, verbose=0, batch_size=self.batch_size)
 
 
