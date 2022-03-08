@@ -52,32 +52,37 @@ class ModelType(Enum):
     DDQNT = 4
 
 # When on dry run, no output files are created
-DRY_RUN = False
+DRY_RUN = True
 
 # Run settings
 OPENAI_ENV = EnvType.LUNAR_LANDER_CONTINUOUS_V2
-MODEL = ModelType.DDQNT
+MODEL = ModelType.ACTOR_CRITIC
 NUM_EPOCHS = 5000
 MAKE_ACTION_DISCRETE = True
-NUM_ACTION_BINS = [4, 4]
+NUM_ACTION_BINS = [6, 4]
+NUM_ACTIONS=np.prod(NUM_ACTION_BINS)
 MAKE_STATE_DISCRETE = False
 NUM_STATE_BINS = 5
-MEMORY_SIZE = 500000
-BATCH_SIZE = 64
+MEMORY_SIZE = 256
+BATCH_SIZE = 128
 LAYER1_SIZE = 64
-LAYER2_SIZE = 32
-LAYER1_ACTIVATION = 'tanh' #'relu'
-LAYER2_ACTIVATION = 'tanh' #'relu'
+LAYER2_SIZE = 80
+LAYER3_SIZE = 64
+LAYER1_ACTIVATION = 'relu' #'relu'
+LAYER2_ACTIVATION = 'relu' #'relu'
+LAYER3_ACTIVATION = 'relu'
 EPSILON = 1
 EPSILON_DEC_RATE = 0.998
 EPSILON_MIN = 0.01
 GAMMA = 0.99
 LEARNING_RATE = 0.00001
 LR_DISCOUNT=0.99
-lr_low1 = 0.000005 #0.35 * LEARNING_RATE
-lr_low2 = 0.000005 #0.25 * LEARNING_RATE
-FIT_EPOCHS = 1
-CLIP_VALUE = 1e-9
+# lr_low1 = 0.000005 #0.35 * LEARNING_RATE1
+# lr_low2 = 0.000005 #0.25 * LEARNING_RATE
+lr1=0.000005
+lr2=0.000005
+FIT_EPOCHS = 10
+CLIP_VALUE = 0.2
 MODIFY_REWARD = False
 MODIFIED_REWARD = -10 if MODIFY_REWARD else -100
 UPDATE_SECOND_NET_INTERVAL=100
@@ -142,7 +147,7 @@ def PlotModel(episode, scores, averages):
         pylab.plot(episodes, scores, 'b')
         pylab.plot(episodes, averages, 'r')
         pylab.title(f'{OPENAI_ENV} PPO training cycle {MODEL.name}\n\
-                        lr = {LEARNING_RATE}, lr1 = {lr_low1}, lr2 = {lr_low2}, epsilon = ({EPSILON},{EPSILON_DEC_RATE},{EPSILON_MIN})\n\
+                        clip_value={CLIP_VALUE} lr = {LEARNING_RATE}, lr1 = {lr1}, lr2 = {lr2}, epsilon = ({EPSILON},{EPSILON_DEC_RATE},{EPSILON_MIN})\n\
                         layer1 = {LAYER1_SIZE}, layer2 = {LAYER2_SIZE}, action bins = {NUM_ACTION_BINS}, batch = {BATCH_SIZE}\n\
                         reward = {MODIFIED_REWARD}, fit epochs = {FIT_EPOCHS}, memory = {MEMORY_SIZE}', fontsize=8)
         pylab.ylabel('Score', fontsize=10)
@@ -505,30 +510,6 @@ class ActorCritic(RLModel):
             return val_loss
         return loss
 
-    def actor_ppo_loss(self,y_true,y_pred):
-        advantages = y_true[:,:1]
-        prediction_picks =  y_true[:, 1:1+self.num_actions]
-        actions = y_true[:, 1+self.num_actions:]
-        #constants
-        entropy_loss = 0.001
-        loss_clip = 0.2
-        clip_tresh=1e-10
-        #prob
-        prob = actions * y_pred
-        old_prob = actions * prediction_picks
-        prob = Keras.clip(prob,clip_tresh,1.0)
-        old_prob = Keras.clip(old_prob,clip_tresh,1.0)
-
-        ratio = Keras.exp(Keras.log(prob)-Keras.log(old_prob))
-        p1 = ratio*advantages
-        p2 = Keras.clip(ratio,min_value=1-loss_clip,max_value=1+loss_clip) * advantages
-
-        actor_loss = -Keras.mean(Keras.minimum(p1,p2))
-        entropy = -(y_pred * Keras.log(y_pred+clip_tresh))
-        entropy = entropy_loss * Keras.mean(entropy)
-
-        total_loss = actor_loss - entropy
-        return total_loss
 
     def create_network(self,layer1_size,layer2_size,num_actions,alpha,beta):
         input = Input(shape=(self.input_length,))
@@ -543,21 +524,51 @@ class ActorCritic(RLModel):
         second_layer=Dense(layer2_size, activation=LAYER2_ACTIVATION, kernel_initializer= \
             tf.random_normal_initializer(stddev=0.01))(bn1)
         bn2 = tf.keras.layers.BatchNormalization()(second_layer)
+        third_layer=Dense(LAYER3_SIZE, activation=LAYER3_ACTIVATION, kernel_initializer= \
+            tf.random_normal_initializer(stddev=0.01))(bn2)
+        bn3 = tf.keras.layers.BatchNormalization()(third_layer)
         probabilities = Dense(num_actions,
-                              activation='softmax')(bn2)
-        values = Dense(1, activation='linear')(bn2)
+                              activation='softmax')(bn3)
+        values = Dense(1, activation='linear')(bn3)
 
         def custom_loss(actual, prediction):
             # We clip values so we dont get 0 or 1 values
-            out = Keras.clip(prediction,1e-4, 1 - 1e-4)
+            out = Keras.clip(prediction,CLIP_VALUE ,1 - CLIP_VALUE)
             # Calculate log-likelihood
             likelihood = actual * tf.math.log(out)
             #likelihood = tf.math.log(prediction)
             loss = tf.reduce_sum(-likelihood * delta)
             return loss
 
+        def actor_ppo_loss(actual, prediction):
+            print("here1")
+            advantages = actual[:, :1]
+            prediction_picks = actual[:, 1:1 + NUM_ACTIONS]
+            actions = actual[:, 1 + NUM_ACTIONS:]
+            # constants
+            entropy_loss = 0.001
+            loss_clip = 0.2
+            clip_tresh = 1e-10
+            # prob
+            print("here2")
+            prob = actions * prediction
+            old_prob = actions * prediction_picks
+            prob = Keras.clip(prob, clip_tresh, 1.0)
+            old_prob = Keras.clip(old_prob, clip_tresh, 1.0)
+            print("here3")
+            ratio = Keras.exp(Keras.log(prob) - Keras.log(old_prob))
+            p1 = ratio * advantages
+            p2 = Keras.clip(ratio, min_value=1 - loss_clip, max_value=1 + loss_clip) * advantages
+
+            actor_loss = -Keras.mean(Keras.minimum(p1, p2))
+            #entropy = -(y_pred * Keras.log(y_pred + clip_tresh))
+            #entropy = entropy_loss * Keras.mean(entropy)
+
+            total_loss = actor_loss #- entropy
+            return total_loss
+
         actor = Model([input, delta], [probabilities])
-        actor.compile(optimizer=Adam(lr=alpha), loss=custom_loss)
+        actor.compile(optimizer=Adam(lr=alpha), loss=actor_ppo_loss)
         critic = Model([input], [values])
         critic.compile(optimizer=Adam(lr=beta), loss='mean_squared_error')
         policy = Model([input], [probabilities])
@@ -798,7 +809,7 @@ class AgentDDQNT(RLModel):
             logging.info("updating second net")
             self.update_second_network()
 
-    def update_second_network(self):
+    def upadate_second_network(self):
         self.q_target.model.set_weights(self.q_eval.model.get_weights())        
 
 
@@ -990,11 +1001,11 @@ def train_loop(agent: RLModel, episodes: int, envir) -> None:
             logging.info(f'Saving weights')
             agent.save()
         #increase batch size when there are many more actions in the memory
-        if episode_idx % 250 == 0 and episode_idx > 400:
-            agent.batch_size = 1.25 * agent.batch_size
-            logging.info("Increase batch size by factor of 1.25")
-        if (episode_idx%100 == 0 and episode_idx > 400) or (score > 100 and score > max_score) or episode_idx==20:
-            agent.calculate_lr()
+        # if episode_idx % 250 == 0 and episode_idx > 400:
+        #     agent.batch_size = 1.25 * agent.batch_size
+        #     logging.info("Increase batch size by factor of 1.25")
+        # if (episode_idx%100 == 0 and episode_idx > 400) or (score > 100 and score > max_score) or episode_idx==20:
+        #     agent.calculate_lr()
 
         max_score = max(max_score, score)
         max_average = max(max_average, avg_score)
@@ -1037,8 +1048,8 @@ mem = ReplayMemory(MEMORY_SIZE, actions_dim, states_dim)
 
 if MODEL == ModelType.ACTOR_CRITIC:
     agent = ActorCritic(memory=mem,batch_size=BATCH_SIZE,input_len=states_dim, actions_dim=actions_dim, index_to_action=env.index_to_action,
-                            epsilon=EPSILON,epsilon_dec=EPSILON_DEC_RATE,epsilon_end=EPSILON_MIN,alpha=lr_low1,
-                            beta=lr_low2,gamma=GAMMA,clip_value=CLIP_VALUE,layer1_size=LAYER1_SIZE,layer2_size=LAYER2_SIZE)
+                            epsilon=EPSILON,epsilon_dec=EPSILON_DEC_RATE,epsilon_end=EPSILON_MIN,alpha=lr1,
+                            beta=lr2,gamma=GAMMA,clip_value=CLIP_VALUE,layer1_size=LAYER1_SIZE,layer2_size=LAYER2_SIZE)
 elif MODEL == ModelType.DDQN:
     agent = AgentDDQN(lr=LEARNING_RATE, gamma=GAMMA, actions_dim=actions_dim, index_to_action=env.index_to_action, batch_size=BATCH_SIZE,
                         states_dim=states_dim, memory=mem, epsilon=EPSILON, epsilon_dec=EPSILON_DEC_RATE, epsilon_end=EPSILON_MIN)
