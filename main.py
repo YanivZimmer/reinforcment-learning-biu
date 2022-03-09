@@ -72,10 +72,10 @@ OPENAI_ENV = EnvType.LUNAR_LANDER_CONTINUOUS_V2
 MODEL = ModelType.TD3
 NUM_EPOCHS = 5000
 MAKE_ACTION_DISCRETE = True
-NUM_ACTION_BINS = [4, 5]
+NUM_ACTION_BINS = [8, 5]
 MAKE_STATE_DISCRETE = False
 NUM_STATE_BINS = 5
-MEMORY_SIZE = 500000
+MEMORY_SIZE = 2048
 BATCH_SIZE = 1024
 LAYER1_SIZE = 32
 LAYER2_SIZE = 64
@@ -102,7 +102,7 @@ MODIFIED_REWARD = -10 if MODIFY_REWARD else TRMINATE_REWARD
 print(f'..................{MODEL.name}..................')
 
 # Do not explore when using ActorCritic
-if MODEL == ModelType.ACTOR_CRITIC:
+if MODEL == ModelType.ACTOR_CRITIC or MODEL == ModelType.TD3:
     EPSILON = 0
     EPSILON_DEC_RATE = 0.00
     EPSILON_MIN = 0.00
@@ -362,11 +362,11 @@ if MAKE_ACTION_DISCRETE:
 #     return tf.one_hot(indeces, depth)
 
 def change_reward(reward):
-    if reward == TRMINATE_REWARD:
-        logging.info('Failed!')
-        if MODIFY_REWARD:
-            logging.info(f'Changed reward to {MODIFIED_REWARD}')
-            return MODIFIED_REWARD
+    # if reward == TRMINATE_REWARD:
+    #     logging.info('Failed!')
+    #     if MODIFY_REWARD:
+    #         logging.info(f'Changed reward to {MODIFIED_REWARD}')
+    #         return MODIFIED_REWARD
     return reward
     # if reward>0:
     #     reward=1.5*reward
@@ -1140,9 +1140,9 @@ def train_loop(agent: RLModel, episodes: int, envir) -> None:
             logging.info(f'Saving weights')
             agent.save()
         #increase batch size when there are many more actions in the memory
-        if episode_idx % 250 == 0 and episode_idx > 400:
-            agent.batch_size = 2 * agent.batch_size
-            logging.info("Increase batch size by factor of 2")
+        # if episode_idx % 250 == 0 and episode_idx > 400:
+        #     agent.batch_size = 2 * agent.batch_size
+        #     logging.info("Increase batch size by factor of 2")
         if (episode_idx%100 == 0 and episode_idx > 400) or (score > 100 and score > max_score) or episode_idx==20:
             agent.calculate_lr()
 
