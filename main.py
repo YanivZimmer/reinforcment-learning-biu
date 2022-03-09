@@ -55,6 +55,7 @@ class ModelType(Enum):
 class LossType(Enum):
     MSE = 'mean_squared_error'
     CUSTOM = 'custom'
+    HUBER = 'huber'
 
 class ActivationType(Enum):
     RELU = 'relu'
@@ -69,23 +70,24 @@ DRY_RUN = False
 
 # Run settings
 OPENAI_ENV = EnvType.LUNAR_LANDER_CONTINUOUS_V2
-MODEL = ModelType.TD3
+MODEL = ModelType.DQN
 NUM_EPOCHS = 5000
 MAKE_ACTION_DISCRETE = True
-NUM_ACTION_BINS = [8, 5]
+NUM_ACTION_BINS = [6, 5]
+NUM_ACTIONS=np.prod(NUM_ACTION_BINS)
 MAKE_STATE_DISCRETE = False
 NUM_STATE_BINS = 5
-MEMORY_SIZE = 2048
-BATCH_SIZE = 1024
+MEMORY_SIZE = 256
+BATCH_SIZE = 64
 LAYER1_SIZE = 32
 LAYER2_SIZE = 64
 LAYER1_ACTIVATION = ActivationType.RELU.value
 LAYER2_ACTIVATION = ActivationType.RELU.value
 LAYER1_LOSS = LossType.CUSTOM.value
-LAYER2_LOSS = LossType.MSE.value
+LAYER2_LOSS = LossType.HUBER.value
 EPSILON = 1
 # prev was EPSILON_DEC_RATE = 0.99
-EPSILON_DEC_RATE = 0.998
+EPSILON_DEC_RATE = 0.999
 EPSILON_MIN = 0.01
 GAMMA = 0.99
 LEARNING_RATE = 0.00001
@@ -390,9 +392,9 @@ class ReplayMemory:
         self.is_terminal = np.zeros(self.memory_size, dtype=np.int32)
 
     def save_transition(self, state, action_idx, action, reward, state_next, is_terminal):
-        if self.memory_counter > self.memory_size:
-            logging.info(f"Memory reached its limit- overriding previous operations."
-                         f" memory_counter={self.memory_counter} memory_size={self.memory_size}")
+        # if self.memory_counter > self.memory_size:
+        #     logging.info(f"Memory reached its limit- overriding previous operations."
+        #                  f" memory_counter={self.memory_counter} memory_size={self.memory_size}")
         idx = self.memory_counter % self.memory_size
         self.states[idx] = state
         self.states_next[idx] = state_next
@@ -582,7 +584,7 @@ class ActorCritic(RLModel):
         
         actor.compile(optimizer=Adam(lr=alpha), loss=loss)
         critic = Model([input], [values])
-        critic.compile(optimizer=Adam(lr=beta), loss=LAYER2_LOSS)
+        critic.compile(optimizer=Adam(lr=beta), loss=tf.keras.losses.Huber())
         policy = Model([input], [probabilities])
         return actor, critic, policy
 
@@ -803,20 +805,17 @@ class AgentDQN(RLModel):
     def _build_dqn(self,lr,num_actions,states_dim):
         model = keras.Sequential([
             Dense(LAYER1_SIZE, input_shape=(states_dim,)),
-            Activation('relu'),
+            Activation(LAYER1_ACTIVATION),
             Dense(LAYER2_SIZE),
-            Activation('relu'),
+            Activation(LAYER2_ACTIVATION),
             Dense(LAYER2_SIZE),
-            Activation('relu'),
+            Activation(LAYER2_ACTIVATION),
             Dense(LAYER2_SIZE),
-            Activation('relu'),
-            Dense(LAYER2_SIZE),
-            Activation('relu'),
-            Dense(LAYER2_SIZE),
-            Activation('relu'),
-            Dense(num_actions)])
+            Dense(num_actions),
+            Activation("softmax")
+        ])
 
-        model.compile(optimizer=Adam(lr=lr), loss='mse')
+        model.compile(optimizer=Adam(lr=lr), loss=tf.keras.losses.Huber())
         return model
     def choose_action(self, state):
         state = state[np.newaxis, :]
@@ -827,6 +826,7 @@ class AgentDQN(RLModel):
             actions = self.q_eval.predict(state)
             action_idx = np.argmax(actions)
         action = self.index_to_action(action_idx)
+        print(f"action={action}")
         return action_idx, action
 
     def learn(self):
@@ -852,7 +852,7 @@ class AgentDQN(RLModel):
 
             _ = self.q_eval.fit(state, q_target, verbose=0)
             #_ = self.q_eval.fit(state, q_target,epochs=10, verbose=0)
-
+            self.calculate_epsilon()
 
     def calculate_epsilon(self):
         discount_eps=1
@@ -890,7 +890,9 @@ class AgentDDQNT(RLModel):
             Activation('relu'),
             Dense(LAYER2_SIZE),
             Activation('relu'),
-            Dense(number_actions)])
+            Dense(number_actions),
+            Activation("softmax")
+        ])
 
         model.compile(optimizer=Adam(lr=lr), loss='mse')
         return model
@@ -983,17 +985,32 @@ class AgentDDQN(RLModel):
         self.q_eval2 = self._build_dqn(lr, self.num_actions, states_dim)
 
     def _build_dqn(self, lr, number_actions, state_dim):
+        # model = keras.Sequential([
+        #     keras.layers.Dense(state_dim, activation='relu'),
+        #     keras.layers.Dense(LAYER1_SIZE, activation=LAYER1_ACTIVATION),
+        #     keras.layers.Dense(LAYER2_SIZE, activation=LAYER2_ACTIVATION),
+        #     keras.layers.Dense(number_actions, activation='s')
+        # ])
+        # model.compile(optimizer=Adam(learning_rate=lr),loss='mean_squared_error')
+        # #model.build((state_dim,1))
+        # #print(model.summary())
+        # return model
+
         model = keras.Sequential([
-            keras.layers.Dense(state_dim, activation='relu'),
-            keras.layers.Dense(LAYER1_SIZE, activation='tanh'),
-            keras.layers.Dense(LAYER2_SIZE, activation='tanh'),
-            keras.layers.Dense(number_actions, activation=None)
+            Dense(LAYER1_SIZE, input_shape=(state_dim,)),
+            Activation(LAYER1_ACTIVATION),
+            Dense(LAYER2_SIZE),
+            Activation(LAYER2_ACTIVATION),
+            Dense(LAYER2_SIZE),
+            Activation(LAYER2_ACTIVATION),
+            Dense(LAYER2_SIZE),
+            Dense(number_actions),
+            Activation("softmax")
         ])
-        model.compile(optimizer=Adam(learning_rate=lr),loss='mean_squared_error')
-        #model.build((state_dim,1))
-        #print(model.summary())
+
+        model.compile(optimizer=Adam(lr=lr), loss='mse')
         return model
-    
+
     def get_name(self):
         return "Double Deep Q Network"
 
@@ -1046,8 +1063,8 @@ class AgentDDQN(RLModel):
         # action_indices = np.dot(actions, action_values)
         # print(f'action_indices: {action_indices}')
         #TODO -dont use hard coded 16!
-        q_eval = np.concatenate(nn1.predict(states)).reshape(BATCH_SIZE,16)
-        q_next = np.concatenate(nn2.predict(states_next)).reshape(BATCH_SIZE,16)
+        q_eval = np.concatenate(nn1.predict(states)).reshape(BATCH_SIZE,NUM_ACTIONS)
+        q_next = np.concatenate(nn2.predict(states_next)).reshape(BATCH_SIZE,NUM_ACTIONS)
         #q_eval=np.stack(q_eval)
         #q_next=np.stack(q_next)
         q_target = np.copy(q_eval)
@@ -1073,7 +1090,7 @@ class AgentDDQN(RLModel):
         for b_idx in batch_idx:
             # print(f'b_idx: {b_idx}')
             q_target[b_idx][actions]=tempa[b_idx]
-        nn1.fit(states, q_target)
+        nn1.fit(states, q_target,verbose=0)
 
     def learn(self):
         if self.memory.memory_counter<self.batch_size:
