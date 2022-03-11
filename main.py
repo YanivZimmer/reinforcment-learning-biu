@@ -63,41 +63,40 @@ class ActivationType(Enum):
 
 # Constants
 TRMINATE_REWARD = -100
-SUCCESS_REWARD = 200
-UPDATE_SECOND_NET_INTERVAL=100
+UPDATE_SECOND_NET_INTERVAL = 10
 # When on dry run, no output files are created
 DRY_RUN = False
 
 # Run settings
-OPENAI_ENV = EnvType.LUNAR_LANDER_CONTINUOUS_V2
-MODEL = ModelType.DQN
-NUM_EPOCHS = 5000
+OPENAI_ENV = EnvType.LUNAR_LANDER_CONTINUOUS_V2.value
+SUCCESS_REWARD = 200 if OPENAI_ENV == EnvType.LUNAR_LANDER_CONTINUOUS_V2.value else 300
+MODEL = ModelType.DDQNT
+NUM_EPOCHS = 700
 MAKE_ACTION_DISCRETE = True
-NUM_ACTION_BINS = [6, 5]
-NUM_ACTIONS=np.prod(NUM_ACTION_BINS)
+NUM_ACTION_BINS = [10, 10]
+NUM_ACTIONS = np.prod(NUM_ACTION_BINS)
 MAKE_STATE_DISCRETE = False
 NUM_STATE_BINS = 5
-MEMORY_SIZE = 256
-BATCH_SIZE = 64
+MEMORY_SIZE = 1000000
+BATCH_SIZE = 1024
 LAYER1_SIZE = 32
 LAYER2_SIZE = 64
 LAYER1_ACTIVATION = ActivationType.RELU.value
 LAYER2_ACTIVATION = ActivationType.RELU.value
-LAYER1_LOSS = LossType.CUSTOM.value
-LAYER2_LOSS = LossType.HUBER.value
-EPSILON = 1
+LAYER1_LOSS = LossType.MSE.value
+LAYER2_LOSS = LossType.MSE.value
+EPSILON = 0.9
 # prev was EPSILON_DEC_RATE = 0.99
-EPSILON_DEC_RATE = 0.999
-EPSILON_MIN = 0.01
-GAMMA = 0.99
-LEARNING_RATE = 0.00001
-LEARNING_RATE_DEC_RATE = 0.99
-LR_DISCOUNT=0.99
-lr_low1 = 0.000005 #0.35 * LEARNING_RATE
-lr_low2 = 0.000005 #0.25 * LEARNING_RATE
+EPSILON_MIN = 0.05
+EPSILON_DEC_RATE = (EPSILON - EPSILON_MIN) / 200
+GAMMA = 0.999
+LEARNING_RATE = 1e-4 #0.00001
+LEARNING_RATE_DEC_RATE = 1
+lr_low1 = 1e-4 #0.35 * LEARNING_RATE
+lr_low2 = 1e-4 #0.25 * LEARNING_RATE
 FIT_EPOCHS = 10
 CLIP_VALUE = 1e-9
-MODIFY_REWARD = True
+MODIFY_REWARD = False
 ENV_APPLY_TIME_LIMIT = False
 MODIFIED_REWARD = -10 if MODIFY_REWARD else TRMINATE_REWARD
 
@@ -134,27 +133,27 @@ for device in gpu_devices:
 
 
 # video
-# def show_video():
-#   mp4list = glob.glob('video/*.mp4')
-#   if len(mp4list) > 0:
-#     mp4 = mp4list[0]
-#     video = io.open(mp4, 'r+b').read()
-#     encoded = base64.b64encode(video)
-#     ipythondisplay.display(HTML(data='''<video alt="test" autoplay
-#                 loop controls style="height: 400px;">
-#                 <source src="data:video/mp4;base64,{0}" type="video/mp4" />
-#              </video>'''.format(encoded.decode('ascii'))))
-#   else:
-#     print("Could not find video")
-#
+def show_video():
+  mp4list = glob.glob('video/*.mp4')
+  if len(mp4list) > 0:
+    mp4 = mp4list[0]
+    video = io.open(mp4, 'r+b').read()
+    encoded = base64.b64encode(video)
+    ipythondisplay.display(HTML(data='''<video alt="test" autoplay
+                loop controls style="height: 400px;">
+                <source src="data:video/mp4;base64,{0}" type="video/mp4" />
+             </video>'''.format(encoded.decode('ascii'))))
+  else:
+    print("Could not find video")
+
 def wrap_env(env):
     env = Monitor(env, './video', force=True)
     #env = TimeLimit(env, max_episode_steps=1000)
     return env
 
 def PlotModel(episode, scores, averages):
-    # if DRY_RUN:
-    #     return
+    if DRY_RUN:
+        return
 
     episodes = [i for i in range(0, episode + 1)]
 
@@ -310,22 +309,15 @@ class DiscretizedActionWrapper(gym.ActionWrapper):
         return all_res
 
     def index_to_action(self, idx):
-        # print(idx)
-        # print(len(self.all_perms))
         return self.all_perms[idx]
 
     def action(self, action):
-        # print(f'action: {action}')
         binned_action = []
         for x, bins in zip(action, self.action_matrix):
             mapped_idx = np.digitize([x], bins)[0]
             if mapped_idx == len(bins):
                 mapped_idx -= 1
             binned_action.append(bins[mapped_idx])
-        # binned_action = [bins[np.digitize([x], bins)[0]]
-        #           for x, bins in zip(action, self.action_matrix)]
-        # print(f'binned_action: {binned_action}')
-        # print(f'state_matrix: {self.state_matrix}')
         return binned_action
     
     def reverse_action(self, action):
@@ -364,11 +356,11 @@ if MAKE_ACTION_DISCRETE:
 #     return tf.one_hot(indeces, depth)
 
 def change_reward(reward):
-    # if reward == TRMINATE_REWARD:
-    #     logging.info('Failed!')
-    #     if MODIFY_REWARD:
-    #         logging.info(f'Changed reward to {MODIFIED_REWARD}')
-    #         return MODIFIED_REWARD
+    if reward == TRMINATE_REWARD:
+        logging.info('Failed!')
+        if MODIFY_REWARD:
+            logging.info(f'Changed reward to {MODIFIED_REWARD}')
+            return MODIFIED_REWARD
     return reward
     # if reward>0:
     #     reward=1.5*reward
@@ -384,7 +376,8 @@ class ReplayMemory:
         self.states = np.zeros((self.memory_size, state_dim), dtype=np.float32)
         self.states_next = np.zeros((self.memory_size, state_dim), dtype=np.float32)
         # action space discrete
-        self.actions_idx = np.zeros((self.memory_size, self.actions_dim),dtype=int)
+        # self.actions_idx = np.zeros((self.memory_size, self.actions_dim),dtype=int)
+        self.actions_idx = np.zeros((self.memory_size),dtype=int)
         self.actions = np.zeros((self.memory_size, actions_dim),dtype=float)
         # rewards are floatType
         self.rewards = np.zeros(self.memory_size, dtype=np.float32)
@@ -398,7 +391,8 @@ class ReplayMemory:
         idx = self.memory_counter % self.memory_size
         self.states[idx] = state
         self.states_next[idx] = state_next
-        self.actions_idx[idx, action_idx] = 1.0
+        # self.actions_idx[idx, action_idx] = 1.0
+        self.actions_idx[idx] = action_idx
         self.actions[idx] = action
         self.rewards[idx] = reward
         self.is_terminal[idx] = is_terminal
@@ -415,6 +409,10 @@ class ReplayMemory:
         is_terminal = self.is_terminal[batch]
 
         return states, actions_idx, actions, rewards, states_next, is_terminal
+    
+    def __len__(self):
+        return self.memory_counter
+
 # class dummy_agent:
 #     def __init__(self):
 #         self.epsilon = 1
@@ -479,6 +477,11 @@ class RLModel:
 
     def calculate_lr(self):
         pass
+
+    def end_epoch(self, epoch):
+        self.calculate_epsilon()
+        if (epoch % 100 == 0 and epoch > 400) or epoch == 20:
+            agent.calculate_lr()
 
     def save(self):
         pass
@@ -835,8 +838,9 @@ class AgentDQN(RLModel):
                                           self.memory.sample_batch(self.batch_size)
 
             #action = tf.one_hot(action_idx,self.num_actions)
-            action_values = np.array(self.action_space, dtype=np.int8)
-            action_indices = np.dot(action_idx, action_values)
+            # action_values = np.array(self.action_space, dtype=np.int8)
+            # action_indices = np.dot(action_idx, action_values)
+            action_indices = action_idx
             non_terminal = np.where(is_terminal == 1, 0, 1)
 
             q_eval = self.q_eval.predict(state)
@@ -856,7 +860,7 @@ class AgentDQN(RLModel):
 
     def calculate_epsilon(self):
         discount_eps=1
-        self.epsilon = max(self.epsilon *discount_eps * self.epsilon_dec, self.epsilon_end)
+        self.epsilon = max(self.epsilon - self.epsilon_dec, self.epsilon_end)
 
     def calculate_lr(self):
         print(f'lr to {LEARNING_RATE_DEC_RATE} * lr')
@@ -905,11 +909,11 @@ class AgentDDQNT(RLModel):
 
     def calculate_epsilon(self):
         discount_eps = 1
-        self.epsilon = max(self.epsilon * self.epsilon_dec, self.epsilon_end)
+        self.epsilon = max(self.epsilon - self.epsilon_dec, self.epsilon_end)
 
     def calculate_lr(self):
-        self.lr = LR_DISCOUNT * self.lr
-        logging.info(f'lr to {LR_DISCOUNT} * lr ={self.lr}')
+        self.lr = LEARNING_RATE_DEC_RATE * self.lr
+        logging.info(f'lr to {LEARNING_RATE_DEC_RATE} * lr ={self.lr}')
         K.set_value(self.q_eval.optimizer.learning_rate, self.lr)
 
     def _get_q_eval_weight_file_name(self, layer_num):
@@ -941,8 +945,9 @@ class AgentDDQNT(RLModel):
         states, actions_idx, _, rewards, states_next, is_terminal = self.memory.sample_batch(self.batch_size)
         non_terminal = np.where(is_terminal == 1, 0, 1)
 
-        action_values = np.array(self.action_space, dtype=np.int8)
-        action_indices = np.dot(actions_idx, action_values)
+        # action_values = np.array(self.action_space, dtype=np.int8)
+        # action_indices = np.dot(actions_idx, action_values)
+        action_indices = actions_idx
 
         q_eval = self.q_eval.predict(states)
 
@@ -956,13 +961,15 @@ class AgentDDQNT(RLModel):
                                                 self.gamma * max_val * non_terminal
 
         _ = self.q_eval.fit(states, q_target, verbose=0)
-
-        if self.memory.memory_counter % self.update_second_net_interval == 0:
+    
+    def end_epoch(self, epoch):
+        super().end_epoch(epoch)
+        if epoch % self.update_second_net_interval == 0:
             logging.info("updating second net")
             self.update_second_network()
 
-    def upadate_second_network(self):
-        self.q_target.model.set_weights(self.q_eval.model.get_weights())
+    def update_second_network(self):
+        self.q_target.set_weights(self.q_eval.get_weights())
 
 
 class AgentDDQN(RLModel):
@@ -1003,9 +1010,7 @@ class AgentDDQN(RLModel):
             Activation(LAYER2_ACTIVATION),
             Dense(LAYER2_SIZE),
             Activation(LAYER2_ACTIVATION),
-            Dense(LAYER2_SIZE),
-            Dense(number_actions),
-            Activation("softmax")
+            Dense(number_actions)
         ])
 
         model.compile(optimizer=Adam(lr=lr), loss='mse')
@@ -1019,7 +1024,7 @@ class AgentDDQN(RLModel):
 
     def calculate_epsilon(self):
         discount_eps=1
-        self.epsilon = max(self.epsilon * self.epsilon_dec, self.epsilon_end)
+        self.epsilon = max(self.epsilon - self.epsilon_dec, self.epsilon_end)
     
     def calculate_lr(self):
         print(f'lr to {LEARNING_RATE_DEC_RATE} * lr')
@@ -1109,6 +1114,7 @@ class AgentDDQN(RLModel):
                          
         self.train2nn(nn1, nn2, states, actions_idx, rewards, states_next, non_terminal)
 
+
 def train_step(agent: RLModel, envir):
     observation = envir.reset()
     done = False
@@ -1135,11 +1141,13 @@ def train_step(agent: RLModel, envir):
                               next_observation, done)
         agent.learn()
         observation = next_observation
+    envir.close()
     return score
     # ...
 
 
 def train_loop(agent: RLModel, episodes: int, envir) -> None:
+    envir = wrap_env(envir)
     score_history = []
     average_history = []
     max_score = float('-inf')
@@ -1148,7 +1156,7 @@ def train_loop(agent: RLModel, episodes: int, envir) -> None:
 
     for episode_idx in range(episodes):
         score = train_step(agent, envir)
-        agent.calculate_epsilon()
+        agent.end_epoch(episode_idx)
         score_history.append(score)
         avg_score = np.mean(score_history[-100:])
         average_history.append(avg_score)
@@ -1160,8 +1168,6 @@ def train_loop(agent: RLModel, episodes: int, envir) -> None:
         # if episode_idx % 250 == 0 and episode_idx > 400:
         #     agent.batch_size = 2 * agent.batch_size
         #     logging.info("Increase batch size by factor of 2")
-        if (episode_idx%100 == 0 and episode_idx > 400) or (score > 100 and score > max_score) or episode_idx==20:
-            agent.calculate_lr()
 
         max_score = max(max_score, score)
         max_average = max(max_average, avg_score)
@@ -1216,8 +1222,254 @@ elif MODEL == ModelType.DDQN:
 elif MODEL == ModelType.DQN:
     agent = AgentDQN(lr=LEARNING_RATE, gamma=GAMMA, actions_dim=actions_dim, index_to_action=env.index_to_action, batch_size=BATCH_SIZE,
                         states_dim=states_dim, memory=mem, epsilon=EPSILON, epsilon_dec=EPSILON_DEC_RATE, epsilon_end=EPSILON_MIN)
+elif  MODEL == ModelType.DDQNT:
+    agent = AgentDDQNT(lr=LEARNING_RATE, gamma=GAMMA, actions_dim=actions_dim, index_to_action=env.index_to_action, batch_size=BATCH_SIZE,
+                        states_dim=states_dim, memory=mem, epsilon=EPSILON, epsilon_dec=EPSILON_DEC_RATE, epsilon_end=EPSILON_MIN)
 
 logging.info("start ag_half_eps lr low train")
 train_loop(agent, NUM_EPOCHS, env)
 logging.info("done with ag_half_eps lr low train")
 
+
+#############################################################
+# Check other
+
+# import torch
+# import torch.nn as nn
+# import torch.nn.functional as F
+# import torch.optim as optim
+# import random
+# import math
+# from collections import namedtuple
+
+# class DQN(nn.Module):
+#     def __init__(self, input_size, output_size):
+#         super(DQN, self).__init__()
+#         self.l = nn.Sequential(nn.Linear(input_size, 32),
+#                            nn.ReLU(),
+#                            nn.Linear(32, 64),
+#                            nn.ReLU(),
+#                            nn.Linear(64, 32),
+#                            nn.ReLU(),
+#                            nn.Linear(32, 2 * output_size))
+        
+#     def forward(self, x, batch_size):
+#         x = self.l(x)
+#         x = x.view(batch_size, 2)
+#         return x
+
+# """## Memory Replay"""
+
+# Transition = namedtuple('Transition',
+#                         ('state', 'action', 'next_state', 'reward'))
+
+
+# # class ReplayMemory(object):
+
+# #     def __init__(self, capacity):
+# #         self.capacity = capacity
+# #         self.memory = []
+# #         self.position = 0
+
+# #     def push(self, *args):
+# #         """Saves a transition."""
+# #         if len(self.memory) < self.capacity:
+# #             self.memory.append(None)
+# #         self.memory[self.position] = Transition(*args)
+# #         self.position = (self.position + 1) % self.capacity
+
+# #     def sample(self, batch_size):
+# #         return random.sample(self.memory, batch_size)
+
+# #     def __len__(self):
+# #         return len(self.memory)
+
+# """## Action select"""
+
+# def select_action(state):
+#     global steps_done
+#     sample = random.random()
+#     eps_threshold = EPSILON_MIN + (EPSILON - EPSILON_MIN) * \
+#         math.exp(-1. * steps_done / 200)
+#     steps_done += 1
+#     if sample > eps_threshold:
+#         with torch.no_grad():
+#             # t.max(1) will return largest column value of each row.
+#             # second column on max result is index of where max element was
+#             # found, so we pick action with the larger expected reward.
+
+#             # get action according to net A
+#             res = ddqn_policy_net(state, 1).squeeze()
+#             res = res.max(1)[1].view(2)
+#             return res
+#     else:
+#         return torch.tensor([random.randrange(n_actions), random.randrange(n_actions)], device=device, dtype=torch.long).view(2)
+
+# """## Optimize Model"""
+
+# def optimize_model():
+#     if len(memory) < BATCH_SIZE:
+#         return
+#     states, actions_idx, actions, rewards, states_next, is_terminal = memory.sample_batch(BATCH_SIZE)
+#     # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
+#     # detailed explanation). This converts batch-array of Transitions
+#     # to Transition of batch-arrays.
+#     # batch = Transition(*zip(*transitions))
+
+#     # Compute a mask of non-final states and concatenate the batch elements
+#     # (a final state would've been the one after which simulation ended)
+#     non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
+#                                           states_next)), device=device, dtype=torch.bool)
+#     non_final_next_states = torch.cat([s for s in states_next
+#                                                 if s is not None]).view(BATCH_SIZE, -1)
+#     state_batch = torch.cat(states).view(BATCH_SIZE, -1)
+#     action_batch = torch.cat(actions).view(BATCH_SIZE, -1).unsqueeze(-1)
+#     reward_batch = torch.cat(rewards).view(BATCH_SIZE, -1)
+
+#     ddqn_policy_net_output = ddqn_policy_net(non_final_next_states, BATCH_SIZE).squeeze()
+#     # get action batch as argmax of Q values for next states
+#     new_action_batch = torch.argmax(ddqn_policy_net_output, dim=-1).view(BATCH_SIZE, -1).unsqueeze(-1)
+
+#     # compute the Q values according to target net with respect to new actions batch
+#     ddqn_target_net_out = ddqn_target_net(non_final_next_states, BATCH_SIZE).gather(-1, new_action_batch).squeeze()
+
+#     next_state_values = torch.zeros((BATCH_SIZE, 2), device=device)
+#     next_state_values[non_final_mask] = ddqn_target_net_out.detach()
+    
+#     # Compute the expected Q values of the target net
+#     expected_state_action_values = (next_state_values * GAMMA) + reward_batch
+
+#     # compute Q values of policy net
+#     Q_policy = ddqn_policy_net(state_batch, BATCH_SIZE).squeeze()
+#     Q_policy = Q_policy.gather(-1, action_batch)
+
+#     # Compute Huber loss
+#     loss = F.smooth_l1_loss(Q_policy, expected_state_action_values.unsqueeze(1))
+
+#     # Optimize the model
+#     optimizer.zero_grad()
+#     loss.backward()
+#     for param in ddqn_policy_net.parameters():
+#         param.grad.data.clamp_(-1, 1)
+#     optimizer.step()
+
+# """## Main loop"""
+
+# def get_random_noise():
+#     #Draw random samples from a normal (Gaussian) distribution.
+#     mu, sigma = 0, 0.05 # mean and standard deviation
+#     x = np.random.normal(mu, sigma, 1)
+#     y = np.random.normal(mu, sigma, 1)
+
+#     return x, y
+
+# def run_episodes(num_episodes, env, is_train, with_random=False):
+#     env = wrap_env(env)
+
+#     if is_train:
+#         ddqn_policy_net.train()
+#     else:
+#         ddqn_policy_net.eval()
+
+    
+#     rewards_list = []
+        
+#     for i_episode in range(num_episodes):
+#         done = False
+#         iter = 0
+#         total_reward = 0
+#         # Initialize the environment and state
+#         state = env.reset()
+
+
+#         while not done:
+#             if with_random:
+#                 x, y = get_random_noise()
+#                 state[0] += x
+#                 state[1] += y
+
+#             state = torch.as_tensor(state)
+#             # Select and perform an action
+#             action = select_action(state)
+#             main_eng_action = action[0]
+#             sides_eng_action = action[1]
+
+#             # apply the action
+#             # get the next state, reward, is_done flag
+#             next_state, reward, done, _ = env.step(np.array([main_eng_action, sides_eng_action]))
+
+#             total_reward += reward
+
+#             state = torch.as_tensor(state).float()
+#             action = torch.as_tensor(action).long()
+#             next_state = torch.as_tensor(next_state).float()
+#             reward = torch.as_tensor([reward]).float()
+
+#             # Store the transition in memory
+#             memory.save_transition(state, 0, action, reward, next_state, done)
+
+#             # Move to the next state
+#             state = next_state
+
+#             if is_train:
+#                 # Perform one step of the optimization (on the target network)
+#                 optimize_model()
+
+#             if iter % 20 == 0:
+#                     print(f'Episode: {i_episode}, Reward: {total_reward}, iteration: {iter}')
+            
+#             iter +=1
+#         rewards_list.append(total_reward)
+#         # Update the target network, copying all weights and biases in DQN
+#         if i_episode % TARGET_UPDATE == 0:
+#             ddqn_target_net.load_state_dict(ddqn_policy_net.state_dict())
+
+#     return rewards_list
+
+# """## main"""
+
+# GAMMA = 0.999
+# EPS_START = 0.9
+# EPS_END = 0.05
+# EPS_DECAY = 200
+
+# UPDATE_THRESHOLD = 0.5
+
+# device = 'cpu'
+
+# # models params
+# LR = 1e-4
+# n_actions = 20
+# TARGET_UPDATE = 10
+# BATCH_SIZE = 1024
+
+# # define models
+# ddqn_policy_net = DQN(*env.observation_space.shape, n_actions).to(device)
+# ddqn_target_net = DQN(*env.observation_space.shape, n_actions).to(device)
+# ddqn_target_net.load_state_dict(ddqn_policy_net.state_dict())
+# ddqn_target_net.eval()
+
+# optimizer = optim.Adam(ddqn_policy_net.parameters(), lr=LR)
+# memory = ReplayMemory(MEMORY_SIZE, actions_dim, states_dim)
+
+# steps_done = 0
+
+# # actions = create_actions_space(n_actions)
+
+# num_episodes=700
+# train_rewards = run_episodes(num_episodes, env, is_train=True, with_random=False)
+# ddqn_train_avg = sum(train_rewards) / len(train_rewards)
+# print(f'Rewards after train: {ddqn_train_avg}')
+
+# plt.plot(train_rewards, label='DDQN')
+# plt.ylabel("total episode reward")
+# plt.xlabel("#episode")
+# plt.legend()
+
+# num_episodes=100
+# test_rewards = run_episodes(num_episodes, env, is_train=False, with_random=False)
+# ddqn_test_avg = sum(test_rewards) / len(test_rewards)
+# print(f'Rewards after test: {ddqn_test_avg}')
+
+# env.close()
+# show_video()
