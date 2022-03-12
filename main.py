@@ -70,9 +70,9 @@ DRY_RUN = False
 # Run settings
 OPENAI_ENV = EnvType.LUNAR_LANDER_CONTINUOUS_V2.value
 SUCCESS_REWARD = 200 if OPENAI_ENV == EnvType.LUNAR_LANDER_CONTINUOUS_V2.value else 300
-MODEL = ModelType.DDQNT
+MODEL = ModelType.DQN
 NUM_EPOCHS = 700
-MAKE_ACTION_DISCRETE = True
+MAKE_ACTION_DISCRETE = False
 NUM_ACTION_BINS = [10, 10]
 NUM_ACTIONS = np.prod(NUM_ACTION_BINS)
 MAKE_STATE_DISCRETE = False
@@ -192,7 +192,7 @@ observation_min_vals = observation_space.low
 observation_max_vals = observation_space.high
 
 states_dim = len(observation_min_vals)
-
+number_of_action_tag=10
 # class Discretizationer:
 #     def __init__(self,bins_num,min,max):
 #         self.bins_num = bins_num
@@ -371,14 +371,15 @@ class ReplayMemory:
         self.memory_size = max_size
         self.memory_counter = 0
 
-        self.actions_dim = np.prod(NUM_ACTION_BINS)
+        #self.actions_dim = np.prod(NUM_ACTION_BINS)
         
         self.states = np.zeros((self.memory_size, state_dim), dtype=np.float32)
         self.states_next = np.zeros((self.memory_size, state_dim), dtype=np.float32)
         # action space discrete
         # self.actions_idx = np.zeros((self.memory_size, self.actions_dim),dtype=int)
-        self.actions_idx = np.zeros((self.memory_size),dtype=int)
-        self.actions = np.zeros((self.memory_size, actions_dim),dtype=float)
+        #WARNING
+        self.actions_idx = np.zeros((self.memory_size,2),dtype=int)
+        #self.actions = np.zeros((self.memory_size, 2*number_of_action_tag),dtype=float)
         # rewards are floatType
         self.rewards = np.zeros(self.memory_size, dtype=np.float32)
         # boolean but will be represeted as int
@@ -393,7 +394,7 @@ class ReplayMemory:
         self.states_next[idx] = state_next
         # self.actions_idx[idx, action_idx] = 1.0
         self.actions_idx[idx] = action_idx
-        self.actions[idx] = action
+        #self.actions[idx] = action
         self.rewards[idx] = reward
         self.is_terminal[idx] = is_terminal
         self.memory_counter += 1
@@ -405,7 +406,7 @@ class ReplayMemory:
         states_next = self.states_next[batch]
         rewards = self.rewards[batch]
         actions_idx = self.actions_idx[batch]
-        actions = self.actions[batch]
+        actions = None#self.actions[batch]
         is_terminal = self.is_terminal[batch]
 
         return states, actions_idx, actions, rewards, states_next, is_terminal
@@ -791,21 +792,24 @@ class ActorCriticTD3(RLModel):
 
 
 class AgentDQN(RLModel):
-    def __init__(self, lr, gamma, actions_dim, index_to_action: Function, batch_size, states_dim, memory: ReplayMemory,
+    def __init__(self, lr, gamma, actions_dim, batch_size, states_dim, memory: ReplayMemory,
                epsilon, epsilon_dec=1e-3, epsilon_end=0.01,
                 fname='dqn_model.h5'):
-        super().__init__(memory, batch_size, states_dim, actions_dim, index_to_action,
+        super().__init__(memory, batch_size, states_dim, actions_dim, None,
                             epsilon, epsilon_dec, epsilon_end, gamma)
         self.model_file = fname
         self.lr=lr
         #   self.memory = Memory
-        self.num_actions = np.prod(NUM_ACTION_BINS)
-        self.q_eval = self._build_dqn(lr, self.num_actions, states_dim)
-        self.action_space = [i for i in range(self.num_actions)]
+        self.num_actions = number_of_action_tag
+        self.q_eval = self._build_dqn(lr, states_dim)
+        self.action_space_idx = [(i,j) for i in range(self.num_actions) for j in range(self.num_actions)]
+        self.action_space_real = self.create_actions_space(self.num_actions)
+        print("self.action_space_idx",self.action_space_idx)
+        print("self.action_space_real",self.action_space_real)
     def get_name(self):
-        return "Vanila Deep Q Network"
+        return "Vanila Deep Q Network number_of_action_tag version"
 
-    def _build_dqn(self,lr,num_actions,states_dim):
+    def _build_dqn(self,lr,states_dim):
         model = keras.Sequential([
             Dense(LAYER1_SIZE, input_shape=(states_dim,)),
             Activation(LAYER1_ACTIVATION),
@@ -813,24 +817,48 @@ class AgentDQN(RLModel):
             Activation(LAYER2_ACTIVATION),
             Dense(LAYER2_SIZE),
             Activation(LAYER2_ACTIVATION),
-            Dense(LAYER2_SIZE),
-            Dense(num_actions),
-            Activation("softmax")
+            Dense(2*self.num_actions),
         ])
 
-        model.compile(optimizer=Adam(lr=lr), loss=tf.keras.losses.Huber())
+        model.compile(optimizer=Adam(lr=lr), loss='mse')
         return model
     def choose_action(self, state):
         state = state[np.newaxis, :]
         rand = np.random.random()
+        action_idx=np.zeros(2)
         if rand < self.epsilon:
-            action_idx = np.random.choice(self.action_space)
+            action_idx[0]= np.random.choice(self.num_actions)
+            action_idx[1]= np.random.choice(self.num_actions)
+            logging.debug("................",action_idx,"..................")
         else:
-            actions = self.q_eval.predict(state)
-            action_idx = np.argmax(actions)
-        action = self.index_to_action(action_idx)
-        print(f"action={action}")
+            raw_pred = self.q_eval.predict(state)
+            raw_pred=raw_pred.reshape(2,self.num_actions)
+            a=raw_pred[0]
+            b=raw_pred[1]
+            raw_pred_split=[a,b]
+            #raw_pred_split=[raw_pred[:self.num_actions],raw_pred[self.num_actions:]]
+            action_idx[0] = np.argmax(raw_pred_split[0])
+            action_idx[1] = np.argmax(raw_pred_split[1])
+        action = self.to_action(action_idx)
+        logging.debug(f"choose action={action}")
         return action_idx, action
+    def to_action(self,idx):
+        #WARNING
+        action=np.zeros(2)
+        action[0] = self.action_space_real[0][int(idx[0])]
+        action[1] = self.action_space_real[1][int(idx[1])]
+        return action
+    def create_actions_space(self,n_actions):
+        # divide the actions space to main engine and left-right engines.
+        # We will then create all combinations of pairs for both engines.
+        main_eng_actions_n = n_actions
+        l_r_eng_actions_n = n_actions
+
+        main_eng_range = np.linspace(-1, 1, main_eng_actions_n, endpoint=True)
+        l_r_eng_range = np.linspace(-1, 1, l_r_eng_actions_n, endpoint=True)
+
+        actions = [main_eng_range, l_r_eng_range]
+        return actions
 
     def learn(self):
         if self.memory.memory_counter > self.batch_size:
@@ -840,7 +868,6 @@ class AgentDQN(RLModel):
             #action = tf.one_hot(action_idx,self.num_actions)
             # action_values = np.array(self.action_space, dtype=np.int8)
             # action_indices = np.dot(action_idx, action_values)
-            action_indices = action_idx
             non_terminal = np.where(is_terminal == 1, 0, 1)
 
             q_eval = self.q_eval.predict(state)
@@ -850,13 +877,18 @@ class AgentDQN(RLModel):
             q_target = q_eval.copy()
 
             batch_index = np.arange(self.batch_size, dtype=np.int32)
+            max_val = np.max(q_next, axis=1)
+            new_val = reward + self.gamma * max_val * non_terminal
+            for i in batch_index:
+                q_target[i, action_idx[0]] = new_val[i]
+                q_target[i, action_idx[1] + self.num_actions] = new_val[i]
 
-            q_target[batch_index, action_indices] = reward + \
-                                  self.gamma*np.max(q_next, axis=1)*non_terminal
+            # q_target[batch_index, action_indices] = reward + \
+            #                       self.gamma*np.max(q_next, axis=1)*non_terminal
 
             _ = self.q_eval.fit(state, q_target, verbose=0)
             #_ = self.q_eval.fit(state, q_target,epochs=10, verbose=0)
-            self.calculate_epsilon()
+            #self.calculate_epsilon()
 
     def calculate_epsilon(self):
         discount_eps=1
@@ -950,9 +982,7 @@ class AgentDDQNT(RLModel):
         action_indices = actions_idx
 
         q_eval = self.q_eval.predict(states)
-
         q_next = self.q_target.predict(states_next)
-
         q_target = q_eval.copy()
 
         batch_index = np.arange(self.batch_size, dtype=np.int32)
@@ -992,17 +1022,6 @@ class AgentDDQN(RLModel):
         self.q_eval2 = self._build_dqn(lr, self.num_actions, states_dim)
 
     def _build_dqn(self, lr, number_actions, state_dim):
-        # model = keras.Sequential([
-        #     keras.layers.Dense(state_dim, activation='relu'),
-        #     keras.layers.Dense(LAYER1_SIZE, activation=LAYER1_ACTIVATION),
-        #     keras.layers.Dense(LAYER2_SIZE, activation=LAYER2_ACTIVATION),
-        #     keras.layers.Dense(number_actions, activation='s')
-        # ])
-        # model.compile(optimizer=Adam(learning_rate=lr),loss='mean_squared_error')
-        # #model.build((state_dim,1))
-        # #print(model.summary())
-        # return model
-
         model = keras.Sequential([
             Dense(LAYER1_SIZE, input_shape=(state_dim,)),
             Activation(LAYER1_ACTIVATION),
@@ -1219,7 +1238,7 @@ elif MODEL == ModelType.DDQN:
     agent = AgentDDQN(lr=LEARNING_RATE, gamma=GAMMA, actions_dim=actions_dim, index_to_action=env.index_to_action, batch_size=BATCH_SIZE,
                         states_dim=states_dim, memory=mem, epsilon=EPSILON, epsilon_dec=EPSILON_DEC_RATE, epsilon_end=EPSILON_MIN)
 elif MODEL == ModelType.DQN:
-    agent = AgentDQN(lr=LEARNING_RATE, gamma=GAMMA, actions_dim=actions_dim, index_to_action=env.index_to_action, batch_size=BATCH_SIZE,
+    agent = AgentDQN(lr=LEARNING_RATE, gamma=GAMMA, actions_dim=actions_dim, batch_size=BATCH_SIZE,
                         states_dim=states_dim, memory=mem, epsilon=EPSILON, epsilon_dec=EPSILON_DEC_RATE, epsilon_end=EPSILON_MIN)
 elif  MODEL == ModelType.DDQNT:
     agent = AgentDDQNT(lr=LEARNING_RATE, gamma=GAMMA, actions_dim=actions_dim, index_to_action=env.index_to_action, batch_size=BATCH_SIZE,
