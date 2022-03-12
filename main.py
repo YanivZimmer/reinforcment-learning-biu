@@ -1225,251 +1225,258 @@ elif MODEL == ModelType.DQN:
 elif  MODEL == ModelType.DDQNT:
     agent = AgentDDQNT(lr=LEARNING_RATE, gamma=GAMMA, actions_dim=actions_dim, index_to_action=env.index_to_action, batch_size=BATCH_SIZE,
                         states_dim=states_dim, memory=mem, epsilon=EPSILON, epsilon_dec=EPSILON_DEC_RATE, epsilon_end=EPSILON_MIN)
-
-logging.info("start ag_half_eps lr low train")
-train_loop(agent, NUM_EPOCHS, env)
-logging.info("done with ag_half_eps lr low train")
-
+##########################################################33
+# logging.info("start ag_half_eps lr low train")
+# train_loop(agent, NUM_EPOCHS, env)
+# logging.info("done with ag_half_eps lr low train")
+#########################################################3
 
 #############################################################
 # Check other
 
-# import torch
-# import torch.nn as nn
-# import torch.nn.functional as F
-# import torch.optim as optim
-# import random
-# import math
-# from collections import namedtuple
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+import random
+import math
+from collections import namedtuple
 
-# class DQN(nn.Module):
-#     def __init__(self, input_size, output_size):
-#         super(DQN, self).__init__()
-#         self.l = nn.Sequential(nn.Linear(input_size, 32),
-#                            nn.ReLU(),
-#                            nn.Linear(32, 64),
-#                            nn.ReLU(),
-#                            nn.Linear(64, 32),
-#                            nn.ReLU(),
-#                            nn.Linear(32, 2 * output_size))
+class DQN(nn.Module):
+    def __init__(self, input_size, output_size):
+        super(DQN, self).__init__()
+        self.l = nn.Sequential(nn.Linear(input_size, 32),
+                           nn.ReLU(),
+                           nn.Linear(32, 64),
+                           nn.ReLU(),
+                           nn.Linear(64, 32),
+                           nn.ReLU(),
+                           nn.Linear(32, 2 * output_size))
         
-#     def forward(self, x, batch_size):
-#         x = self.l(x)
-#         x = x.view(batch_size, 2)
-#         return x
+    def forward(self, x, batch_size):
+        x = self.l(x)
+        x = x.view(batch_size,2,n_actions)
+        return x
 
-# """## Memory Replay"""
+"""## Memory Replay"""
 
-# Transition = namedtuple('Transition',
-#                         ('state', 'action', 'next_state', 'reward'))
+Transition = namedtuple('Transition',
+                        ('state', 'action', 'next_state', 'reward'))
 
 
-# # class ReplayMemory(object):
+class ReplayMemoryV2(object):
 
-# #     def __init__(self, capacity):
-# #         self.capacity = capacity
-# #         self.memory = []
-# #         self.position = 0
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.memory = []
+        self.position = 0
 
-# #     def push(self, *args):
-# #         """Saves a transition."""
-# #         if len(self.memory) < self.capacity:
-# #             self.memory.append(None)
-# #         self.memory[self.position] = Transition(*args)
-# #         self.position = (self.position + 1) % self.capacity
+    def push(self, *args):
+        """Saves a transition."""
+        if len(self.memory) < self.capacity:
+            self.memory.append(None)
+        self.memory[self.position] = Transition(*args)
+        self.position = (self.position + 1) % self.capacity
 
-# #     def sample(self, batch_size):
-# #         return random.sample(self.memory, batch_size)
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
 
-# #     def __len__(self):
-# #         return len(self.memory)
+    def __len__(self):
+        return len(self.memory)
 
-# """## Action select"""
+"""## Action select"""
 
-# def select_action(state):
-#     global steps_done
-#     sample = random.random()
-#     eps_threshold = EPSILON_MIN + (EPSILON - EPSILON_MIN) * \
-#         math.exp(-1. * steps_done / 200)
-#     steps_done += 1
-#     if sample > eps_threshold:
-#         with torch.no_grad():
-#             # t.max(1) will return largest column value of each row.
-#             # second column on max result is index of where max element was
-#             # found, so we pick action with the larger expected reward.
+def select_action(state):
+    global steps_done
+    sample = random.random()
+    eps_threshold = EPSILON_MIN + (EPSILON - EPSILON_MIN) * \
+        math.exp(-1. * steps_done / 200)
+    steps_done += 1
+    if sample > eps_threshold:
+        with torch.no_grad():
+            # t.max(1) will return largest column value of each row.
+            # second column on max result is index of where max element was
+            # found, so we pick action with the larger expected reward.
 
-#             # get action according to net A
-#             res = ddqn_policy_net(state, 1).squeeze()
-#             res = res.max(1)[1].view(2)
-#             return res
-#     else:
-#         return torch.tensor([random.randrange(n_actions), random.randrange(n_actions)], device=device, dtype=torch.long).view(2)
+            # get action according to net A
+            res = ddqn_policy_net(state, 1).squeeze()
+            res = res.max(1)[1].view(2)
+            return res
+    else:
+        return torch.tensor([random.randrange(n_actions), random.randrange(n_actions)], device=device, dtype=torch.long).view(2)
 
-# """## Optimize Model"""
+"""## Optimize Model"""
 
-# def optimize_model():
-#     if len(memory) < BATCH_SIZE:
-#         return
-#     states, actions_idx, actions, rewards, states_next, is_terminal = memory.sample_batch(BATCH_SIZE)
-#     # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
-#     # detailed explanation). This converts batch-array of Transitions
-#     # to Transition of batch-arrays.
-#     # batch = Transition(*zip(*transitions))
+def optimize_model():
+    if len(memory) < BATCH_SIZE:
+        return
+    transitions = memory.sample(BATCH_SIZE)
+    # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
+    # detailed explanation). This converts batch-array of Transitions
+    # to Transition of batch-arrays.
+    batch = Transition(*zip(*transitions))
+    # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
+    # detailed explanation). This converts batch-array of Transitions
+    # to Transition of batch-arrays.
+    # batch = Transition(*zip(*transitions))
 
-#     # Compute a mask of non-final states and concatenate the batch elements
-#     # (a final state would've been the one after which simulation ended)
-#     non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
-#                                           states_next)), device=device, dtype=torch.bool)
-#     non_final_next_states = torch.cat([s for s in states_next
-#                                                 if s is not None]).view(BATCH_SIZE, -1)
-#     state_batch = torch.cat(states).view(BATCH_SIZE, -1)
-#     action_batch = torch.cat(actions).view(BATCH_SIZE, -1).unsqueeze(-1)
-#     reward_batch = torch.cat(rewards).view(BATCH_SIZE, -1)
+    # Compute a mask of non-final states and concatenate the batch elements
+    # (a final state would've been the one after which simulation ended)
+    non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
+                                          batch.next_state)), device=device, dtype=torch.bool)
+    non_final_next_states = torch.cat([s for s in batch.next_state
+                                                if s is not None]).view(BATCH_SIZE, -1)
+    state_batch = torch.cat(batch.state).view(BATCH_SIZE, -1)
+    action_batch = torch.cat(batch.action).view(BATCH_SIZE, -1).unsqueeze(-1)
+    reward_batch = torch.cat(batch.reward).view(BATCH_SIZE, -1)
 
-#     ddqn_policy_net_output = ddqn_policy_net(non_final_next_states, BATCH_SIZE).squeeze()
-#     # get action batch as argmax of Q values for next states
-#     new_action_batch = torch.argmax(ddqn_policy_net_output, dim=-1).view(BATCH_SIZE, -1).unsqueeze(-1)
+    ddqn_policy_net_output = ddqn_policy_net(non_final_next_states, BATCH_SIZE).squeeze()
+    # get action batch as argmax of Q values for next states
+    new_action_batch = torch.argmax(ddqn_policy_net_output, dim=-1).view(BATCH_SIZE, -1).unsqueeze(-1)
 
-#     # compute the Q values according to target net with respect to new actions batch
-#     ddqn_target_net_out = ddqn_target_net(non_final_next_states, BATCH_SIZE).gather(-1, new_action_batch).squeeze()
+    # compute the Q values according to target net with respect to new actions batch
+    ddqn_target_net_out = ddqn_target_net(non_final_next_states, BATCH_SIZE).gather(-1, new_action_batch).squeeze()
 
-#     next_state_values = torch.zeros((BATCH_SIZE, 2), device=device)
-#     next_state_values[non_final_mask] = ddqn_target_net_out.detach()
+    next_state_values = torch.zeros((BATCH_SIZE, 2), device=device)
+    next_state_values[non_final_mask] = ddqn_target_net_out.detach()
     
-#     # Compute the expected Q values of the target net
-#     expected_state_action_values = (next_state_values * GAMMA) + reward_batch
+    # Compute the expected Q values of the target net
+    expected_state_action_values = (next_state_values * GAMMA) + reward_batch
 
-#     # compute Q values of policy net
-#     Q_policy = ddqn_policy_net(state_batch, BATCH_SIZE).squeeze()
-#     Q_policy = Q_policy.gather(-1, action_batch)
+    # compute Q values of policy net
+    Q_policy = ddqn_policy_net(state_batch, BATCH_SIZE).squeeze()
+    Q_policy = Q_policy.gather(-1, action_batch)
 
-#     # Compute Huber loss
-#     loss = F.smooth_l1_loss(Q_policy, expected_state_action_values.unsqueeze(1))
+    # Compute Huber loss
+    loss = F.smooth_l1_loss(Q_policy, expected_state_action_values.unsqueeze(1))
 
-#     # Optimize the model
-#     optimizer.zero_grad()
-#     loss.backward()
-#     for param in ddqn_policy_net.parameters():
-#         param.grad.data.clamp_(-1, 1)
-#     optimizer.step()
+    # Optimize the model
+    optimizer.zero_grad()
+    loss.backward()
+    for param in ddqn_policy_net.parameters():
+        param.grad.data.clamp_(-1, 1)
+    optimizer.step()
 
-# """## Main loop"""
+"""## Main loop"""
 
-# def get_random_noise():
-#     #Draw random samples from a normal (Gaussian) distribution.
-#     mu, sigma = 0, 0.05 # mean and standard deviation
-#     x = np.random.normal(mu, sigma, 1)
-#     y = np.random.normal(mu, sigma, 1)
+def get_random_noise():
+    #Draw random samples from a normal (Gaussian) distribution.
+    mu, sigma = 0, 0.05 # mean and standard deviation
+    x = np.random.normal(mu, sigma, 1)
+    y = np.random.normal(mu, sigma, 1)
 
-#     return x, y
+    return x, y
 
-# def run_episodes(num_episodes, env, is_train, with_random=False):
-#     env = wrap_env(env)
+def run_episodes(num_episodes, env, is_train, with_random=False):
+    env = wrap_env(env)
 
-#     if is_train:
-#         ddqn_policy_net.train()
-#     else:
-#         ddqn_policy_net.eval()
+    if is_train:
+        ddqn_policy_net.train()
+    else:
+        ddqn_policy_net.eval()
 
     
-#     rewards_list = []
+    rewards_list = []
         
-#     for i_episode in range(num_episodes):
-#         done = False
-#         iter = 0
-#         total_reward = 0
-#         # Initialize the environment and state
-#         state = env.reset()
+    for i_episode in range(num_episodes):
+        done = False
+        iter = 0
+        total_reward = 0
+        # Initialize the environment and state
+        state = env.reset()
 
 
-#         while not done:
-#             if with_random:
-#                 x, y = get_random_noise()
-#                 state[0] += x
-#                 state[1] += y
+        while not done:
+            if with_random:
+                x, y = get_random_noise()
+                state[0] += x
+                state[1] += y
 
-#             state = torch.as_tensor(state)
-#             # Select and perform an action
-#             action = select_action(state)
-#             main_eng_action = action[0]
-#             sides_eng_action = action[1]
+            state = torch.as_tensor(state)
+            # Select and perform an action
+            action = select_action(state)
+            main_eng_action = action[0]
+            sides_eng_action = action[1]
 
-#             # apply the action
-#             # get the next state, reward, is_done flag
-#             next_state, reward, done, _ = env.step(np.array([main_eng_action, sides_eng_action]))
+            # apply the action
+            # get the next state, reward, is_done flag
+            next_state, reward, done, _ = env.step(np.array([main_eng_action, sides_eng_action]))
 
-#             total_reward += reward
+            total_reward += reward
 
-#             state = torch.as_tensor(state).float()
-#             action = torch.as_tensor(action).long()
-#             next_state = torch.as_tensor(next_state).float()
-#             reward = torch.as_tensor([reward]).float()
+            state = torch.as_tensor(state).float()
+            action = torch.as_tensor(action).long()
+            next_state = torch.as_tensor(next_state).float()
+            reward = torch.as_tensor([reward]).float()
 
-#             # Store the transition in memory
-#             memory.save_transition(state, 0, action, reward, next_state, done)
+            # Store the transition in memory
+            # memory.save_transition(state, 0, action, reward, next_state, done)
+            # Store the transition in memory
+            memory.push(state, action, next_state, reward)
 
-#             # Move to the next state
-#             state = next_state
 
-#             if is_train:
-#                 # Perform one step of the optimization (on the target network)
-#                 optimize_model()
+            # Move to the next state
+            state = next_state
 
-#             if iter % 20 == 0:
-#                     print(f'Episode: {i_episode}, Reward: {total_reward}, iteration: {iter}')
+            if is_train:
+                # Perform one step of the optimization (on the target network)
+                optimize_model()
+
+            if iter % 20 == 0:
+                    print(f'Episode: {i_episode}, Reward: {total_reward}, iteration: {iter}')
             
-#             iter +=1
-#         rewards_list.append(total_reward)
-#         # Update the target network, copying all weights and biases in DQN
-#         if i_episode % TARGET_UPDATE == 0:
-#             ddqn_target_net.load_state_dict(ddqn_policy_net.state_dict())
+            iter +=1
+        rewards_list.append(total_reward)
+        # Update the target network, copying all weights and biases in DQN
+        if i_episode % TARGET_UPDATE == 0:
+            ddqn_target_net.load_state_dict(ddqn_policy_net.state_dict())
 
-#     return rewards_list
+    return rewards_list
 
-# """## main"""
+"""## main"""
 
-# GAMMA = 0.999
-# EPS_START = 0.9
-# EPS_END = 0.05
-# EPS_DECAY = 200
+GAMMA = 0.999
+EPS_START = 0.9
+EPS_END = 0.05
+EPS_DECAY = 200
 
-# UPDATE_THRESHOLD = 0.5
+UPDATE_THRESHOLD = 0.5
 
-# device = 'cpu'
+device = 'cpu'
 
-# # models params
-# LR = 1e-4
-# n_actions = 20
-# TARGET_UPDATE = 10
-# BATCH_SIZE = 1024
+# models params
+LR = 1e-4
+n_actions = 10
+TARGET_UPDATE = 10
+BATCH_SIZE = 1024
 
-# # define models
-# ddqn_policy_net = DQN(*env.observation_space.shape, n_actions).to(device)
-# ddqn_target_net = DQN(*env.observation_space.shape, n_actions).to(device)
-# ddqn_target_net.load_state_dict(ddqn_policy_net.state_dict())
-# ddqn_target_net.eval()
+# define models
+ddqn_policy_net = DQN(*env.observation_space.shape, n_actions).to(device)
+ddqn_target_net = DQN(*env.observation_space.shape, n_actions).to(device)
+ddqn_target_net.load_state_dict(ddqn_policy_net.state_dict())
+ddqn_target_net.eval()
 
-# optimizer = optim.Adam(ddqn_policy_net.parameters(), lr=LR)
-# memory = ReplayMemory(MEMORY_SIZE, actions_dim, states_dim)
+optimizer = optim.Adam(ddqn_policy_net.parameters(), lr=LR)
+memory = ReplayMemoryV2(MEMORY_SIZE)#ReplayMemory(MEMORY_SIZE, actions_dim, states_dim)
 
-# steps_done = 0
+steps_done = 0
 
-# # actions = create_actions_space(n_actions)
+# actions = create_actions_space(n_actions)
 
-# num_episodes=700
-# train_rewards = run_episodes(num_episodes, env, is_train=True, with_random=False)
-# ddqn_train_avg = sum(train_rewards) / len(train_rewards)
-# print(f'Rewards after train: {ddqn_train_avg}')
+num_episodes=700
+train_rewards = run_episodes(num_episodes, env, is_train=True, with_random=False)
+ddqn_train_avg = sum(train_rewards) / len(train_rewards)
+print(f'Rewards after train: {ddqn_train_avg}')
 
-# plt.plot(train_rewards, label='DDQN')
-# plt.ylabel("total episode reward")
-# plt.xlabel("#episode")
-# plt.legend()
+plt.plot(train_rewards, label='DDQN')
+plt.ylabel("total episode reward")
+plt.xlabel("#episode")
+plt.legend()
 
-# num_episodes=100
-# test_rewards = run_episodes(num_episodes, env, is_train=False, with_random=False)
-# ddqn_test_avg = sum(test_rewards) / len(test_rewards)
-# print(f'Rewards after test: {ddqn_test_avg}')
+num_episodes=100
+test_rewards = run_episodes(num_episodes, env, is_train=False, with_random=False)
+ddqn_test_avg = sum(test_rewards) / len(test_rewards)
+print(f'Rewards after test: {ddqn_test_avg}')
 
-# env.close()
-# show_video()
+env.close()
+show_video()
