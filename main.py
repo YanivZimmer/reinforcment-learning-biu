@@ -880,9 +880,8 @@ class AgentDQN(RLModel):
             max_val = np.max(q_next, axis=1)
             new_val = reward + self.gamma * max_val * non_terminal
             for i in batch_index:
-                tralalal=action_idx[i]
-                q_target[i, action_idx[i][0]] = new_val[i]
-                q_target[i, action_idx[i][1] + self.num_actions] = new_val[i]
+                q_target[i, action_idx[0]] = new_val[i]
+                q_target[i, action_idx[1] + self.num_actions] = new_val[i]
 
             # q_target[batch_index, action_indices] = reward + \
             #                       self.gamma*np.max(q_next, axis=1)*non_terminal
