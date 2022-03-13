@@ -70,7 +70,7 @@ DRY_RUN = False
 # Run settings
 OPENAI_ENV = EnvType.LUNAR_LANDER_CONTINUOUS_V2.value
 SUCCESS_REWARD = 200 if OPENAI_ENV == EnvType.LUNAR_LANDER_CONTINUOUS_V2.value else 300
-MODEL = ModelType.DDQN
+MODEL = ModelType.DQN
 NUM_EPOCHS = 700
 MAKE_ACTION_DISCRETE = False
 NUM_ACTION_BINS = [10, 10]
@@ -1004,10 +1004,10 @@ class AgentDDQNT(RLModel):
 
 
 class AgentDDQN(RLModel):
-    def __init__(self, lr, gamma, actions_dim, batch_size, states_dim, memory: ReplayMemory,
+    def __init__(self, lr, gamma, actions_dim, index_to_action: Function, batch_size, states_dim, memory: ReplayMemory,
                epsilon, epsilon_dec=1e-3, epsilon_end=0.01,
                 fname='dqn_model.h5'):
-        super().__init__(memory, batch_size, states_dim, actions_dim, None,
+        super().__init__(memory, batch_size, states_dim, actions_dim, index_to_action,
                             epsilon, epsilon_dec, epsilon_end, gamma)
         self.model_file = fname
         #   self.gamma = gamma
@@ -1018,28 +1018,26 @@ class AgentDDQN(RLModel):
         #   self.batch_size = batch_size
         self.lr=lr
         #   self.memory = Memory
-        self.num_actions = number_of_action_tag
-        self.q_eval1 = self._build_dqn(lr, states_dim)
-        self.q_eval2 = self._build_dqn(lr, states_dim)
-        self.action_space_idx = [(i,j) for i in range(self.num_actions) for j in range(self.num_actions)]
-        self.action_space_real = self.create_actions_space(self.num_actions)
-        print("self.action_space_idx",self.action_space_idx)
-        print("self.action_space_real",self.action_space_real)
+        self.num_actions = np.prod(NUM_ACTION_BINS)
+        self.q_eval1 = self._build_dqn(lr, self.num_actions, states_dim)
+        self.q_eval2 = self._build_dqn(lr, self.num_actions, states_dim)
 
-
-    def _build_dqn(self,lr,states_dim):
+    def _build_dqn(self, lr, number_actions, state_dim):
         model = keras.Sequential([
-            Dense(LAYER1_SIZE, input_shape=(states_dim,)),
+            Dense(LAYER1_SIZE, input_shape=(state_dim,)),
             Activation(LAYER1_ACTIVATION),
             Dense(LAYER2_SIZE),
             Activation(LAYER2_ACTIVATION),
-            Dense(2*self.num_actions),
+            Dense(LAYER2_SIZE),
+            Activation(LAYER2_ACTIVATION),
+            Dense(number_actions)
         ])
+
         model.compile(optimizer=Adam(lr=lr), loss='mse')
         return model
 
     def get_name(self):
-        return "Double Deep Q Network new_tag_version 2D"
+        return "Double Deep Q Network"
 
     def save_transition(self,state,action_idx,action,reward,state_next,is_terminal):
         self.memory.save_transition(state,action_idx,action,reward,state_next,is_terminal)
@@ -1068,75 +1066,55 @@ class AgentDDQN(RLModel):
         self.q_eval1.load_weights(self._get_q_eval_weight_file_name(1))
         self.q_eval2.load_weights(self._get_q_eval_weight_file_name(2))
 
-    # def _choose_action_index(self, observation):
-    #     #chose random with epsilon prob
-    #     if np.random.random() < self.epsilon:
-    #         return np.random.choice(self.actions_dim)
-    #
-    #     state = np.array([observation])
-    #     choose_nn1=False
-    #
-    #     if np.random.random() < 0.5:
-    #         choose_nn1=True
-    #     if choose_nn1:
-    #         return np.argmax(self.q_eval1.predict(state))
-    #     return np.argmax(self.q_eval2.predict(state))
-    def choose_action(self, state):
-        state = state[np.newaxis, :]
-        rand = np.random.random()
-        action_idx=np.zeros(2)
-        if rand < self.epsilon:
-            action_idx[0]= np.random.choice(self.num_actions)
-            action_idx[1]= np.random.choice(self.num_actions)
-            logging.debug("................",action_idx,"..................")
-        else:
-            rand = np.random.random()
-            if rand>0.5:
-                raw_pred = self.q_eval1.predict(state)
-            else:
-                raw_pred = self.q_eval2.predict(state)
-            raw_pred=raw_pred.reshape(2,self.num_actions)
-            a=raw_pred[0]
-            b=raw_pred[1]
-            raw_pred_split=[a,b]
-            #raw_pred_split=[raw_pred[:self.num_actions],raw_pred[self.num_actions:]]
-            action_idx[0] = np.argmax(raw_pred_split[0])
-            action_idx[1] = np.argmax(raw_pred_split[1])
-        action = self.to_action(action_idx)
-        logging.debug(f"choose action={action}")
-        return action_idx, action
-    def to_action(self,idx):
-        #WARNING
-        action=np.zeros(2)
-        action[0] = self.action_space_real[0][int(idx[0])]
-        action[1] = self.action_space_real[1][int(idx[1])]
-        return action
-    def create_actions_space(self,n_actions):
-        # divide the actions space to main engine and left-right engines.
-        # We will then create all combinations of pairs for both engines.
-        main_eng_actions_n = n_actions
-        l_r_eng_actions_n = n_actions
+    def _choose_action_index(self, observation):
+        #chose random with epsilon prob 
+        if np.random.random() < self.epsilon:
+            return np.random.choice(self.actions_dim)
 
-        main_eng_range = np.linspace(-1, 1, main_eng_actions_n, endpoint=True)
-        l_r_eng_range = np.linspace(-1, 1, l_r_eng_actions_n, endpoint=True)
+        state = np.array([observation])
+        choose_nn1=False
 
-        actions = [main_eng_range, l_r_eng_range]
-        return actions
-    
-    def train2nn(self, nn1, nn2, state, action_idx, reward, new_state, non_terminal):
-        q_eval = nn1.predict(state)
-        q_next = nn2.predict(new_state)
-        q_target = q_eval.copy()
-        batch_index = np.arange(self.batch_size, dtype=np.int32)
+        if np.random.random() < 0.5:
+            choose_nn1=True     
+        if choose_nn1:
+            return np.argmax(self.q_eval1.predict(state))
+        return np.argmax(self.q_eval2.predict(state))
 
-        max_val = np.max(q_next, axis=1)
-        new_val = reward + self.gamma * max_val * non_terminal
-        for i in batch_index:
-            tralalal=action_idx[i]
-            q_target[i, action_idx[i][0]] = new_val[i]
-            q_target[i, action_idx[i][1] + self.num_actions] = new_val[i]
-
-        _ = nn1.fit(state, q_target, verbose=0)
+    def train2nn(self, nn1, nn2, states, actions, rewards, states_next, non_terminal):
+        # Flatten 1 hot vector
+        # actions = np.argmax(actions, axis=1)
+        # print(f'actions: {actions}')
+        # action_values = np.array(self.num_actions, dtype=np.int32)
+        # action_indices = np.dot(actions, action_values)
+        # print(f'action_indices: {action_indices}')
+        q_eval = np.concatenate(nn1.predict(states)).reshape(BATCH_SIZE,NUM_ACTIONS)
+        q_next = np.concatenate(nn2.predict(states_next)).reshape(BATCH_SIZE,NUM_ACTIONS)
+        #q_eval=np.stack(q_eval)
+        #q_next=np.stack(q_next)
+        q_target = np.copy(q_eval)
+        batch_idx = np.arange(self.batch_size, dtype=np.int32)
+        # print(f'rewards: {rewards}')
+        # print(f'gamma: {self.gamma}')
+        # print(f'q_next: {q_next} ,shape:{q_next.shape}')
+        # temp1=np.max(q_next, axis=1)
+        # print(f'np.max(q_next, axis=1): {temp1} ,shape:{temp1.shape}')
+        # temp0=np.max(q_next, axis=0)
+        # print(f'np.max(q_next, axis=0): {temp0} ,shape:{temp0.shape}')
+        # print(f'non_terminal: {non_terminal}')
+        # print(f'actions: {actions}')
+        # print(rewards.shape)
+        # print((np.max(q_next, axis=1) * non_terminal).shape)
+        # print((self.gamma * np.max(q_next, axis=1)).shape)
+        # print((self.gamma * np.max(q_next, axis=1) * non_terminal).shape)
+        # print((rewards + self.gamma * np.max(q_next, axis=1) * non_terminal).shape)
+        var=np.max(q_next, axis=1) 
+        tempa = rewards + self.gamma * np.max(q_next, axis=1) * non_terminal
+        # print(f'tempa: {tempa}')
+        # print(f'q_target:{q_target}')
+        for b_idx in batch_idx:
+            # print(f'b_idx: {b_idx}')
+            q_target[b_idx][actions]=tempa[b_idx]
+        nn1.fit(states, q_target,verbose=0)
 
     def learn(self):
         if self.memory.memory_counter<self.batch_size:
@@ -1146,13 +1124,13 @@ class AgentDDQN(RLModel):
         states, actions_idx, _, rewards, states_next, is_terminal = self.memory.sample_batch(self.batch_size)
         non_terminal = np.where(is_terminal==1,0,1)
 
+        nn1 = self.q_eval2
+        nn2 = self.q_eval1
+
         if np.random.random() < 0.5:
             nn1 = self.q_eval1
             nn2 = self.q_eval2
-        else:
-            nn1 = self.q_eval2
-            nn2 = self.q_eval1
-
+                         
         self.train2nn(nn1, nn2, states, actions_idx, rewards, states_next, non_terminal)
 
 
@@ -1258,7 +1236,7 @@ elif MODEL == ModelType.TD3:
                             epsilon=EPSILON,epsilon_dec=EPSILON_DEC_RATE,epsilon_end=EPSILON_MIN,alpha=lr_low1,
                             beta=lr_low2,gamma=GAMMA,clip_value=CLIP_VALUE,layer1_size=LAYER1_SIZE,layer2_size=LAYER2_SIZE)
 elif MODEL == ModelType.DDQN:
-    agent = AgentDDQN(lr=LEARNING_RATE, gamma=GAMMA, actions_dim=actions_dim, batch_size=BATCH_SIZE,
+    agent = AgentDDQN(lr=LEARNING_RATE, gamma=GAMMA, actions_dim=actions_dim, index_to_action=env.index_to_action, batch_size=BATCH_SIZE,
                         states_dim=states_dim, memory=mem, epsilon=EPSILON, epsilon_dec=EPSILON_DEC_RATE, epsilon_end=EPSILON_MIN)
 elif MODEL == ModelType.DQN:
     agent = AgentDQN(lr=LEARNING_RATE, gamma=GAMMA, actions_dim=actions_dim, batch_size=BATCH_SIZE,
