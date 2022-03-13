@@ -22,7 +22,7 @@ from IPython import display as ipythondisplay
 import os
 import copy
 from enum import Enum
-#
+
 os.environ['LANG'] = 'en_US'
 import time
 from math import floor
