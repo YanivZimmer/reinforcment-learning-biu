@@ -310,3 +310,100 @@ class TD3_FORK:
         print(f"Evaluation over {eval_episodes} episodes: {avg_reward:.3f}")
         print("---------------------------------------")
         return avg_reward
+
+
+"""Training the agent"""
+gym.logger.set_level(40)
+max_steps = 3000
+falling_down = 0
+def change_reward(reward,expcount,falling_down):
+    if reward == -100:
+        add_reward = -1
+        reward = -5
+        falling_down += 1
+        expcount += 1
+    else:
+        add_reward = 0
+        reward = 5 * reward
+    return reward,add_reward,expcount,falling_down
+
+
+#def run_step(env,action,replay_buffer):
+#    #action=agent.policy(state)
+#    next_state, reward, done, info = env.step(action)
+#    #fall==add_reward
+#    if reward == -100:
+#        fall = 1
+#    else:
+#        fall = 0
+#    return next_state, reward, done
+    #WARN
+
+
+def run_episode(env,agent,max_steps,expcount,falling_down,train_flag):
+    timestep = 0
+    state = env.reset()
+    ep_score = 0
+    #WARN maybe shoulfd be for all
+    replay_buffer = []
+    for s in range(max_steps):
+        #WARN maybe do random?
+        action=agent.policy(state)
+        next_state, reward, done, _ = env.step(action)
+        ep_score += reward
+        reward, add_reward,expcount,falling_down=change_reward(reward,expcount,falling_down)
+        replay_buffer.append((state, action, reward, add_reward, next_state, done))
+        if done:
+            if add_reward == -1 or ep_score < 250:
+                train_flag = 1
+                for temp in replay_buffer:
+                    agent.add_to_replay_memory(temp, agent.replay_memory_buffer)
+            elif expcount > 0 and np.random.rand() > 0.5:
+                train_flag = 1
+                expcount -= 10
+                for temp in replay_buffer:
+                    agent.add_to_replay_memory(temp, agent.replay_memory_buffer)
+            break
+
+        state = next_state
+        timestep += 1
+        # timestep += 1
+        # total_timesteps += 1
+    return ep_score,timestep,expcount,falling_down,train_flag
+
+def main():
+    env = gym.make('BipedalWalkerHardcore-v3')
+    agent_td3 = TD3_FORK('Bipedalhardcore', env, batch_size=100)
+    max_episodes = 100000
+    max_steps = 3000
+    falling_down = 0
+    episodes_score = []
+    avrage_reward = []
+    train_flag = 0
+    expcount = 0
+    for eps_num in range(max_episodes):
+        score, timestep,expcount,falling_down,train_flag = run_episode(env,agent_td3,max_steps,expcount,falling_down,train_flag)
+        episodes_score.append(score)
+        avg_reward = np.mean(episodes_score[-100:])
+        avrage_reward.append(avg_reward)
+        if avg_reward > 200:
+            test_reward = agent_td3.eval_policy(env, seed=88, eval_episodes=10)
+            if test_reward > 300:
+                final_test_reward = agent_td3.eval_policy(env, seed=88, eval_episodes=100)
+                print(f'final_test_reward={final_test_reward}')
+                if final_test_reward > 300:
+                    print("*********************************Solved*********************************")
+                    break
+
+        # Training agent just on new experiences added to the replay buffer
+        weight = 1 - np.clip(np.mean(episodes_score[-100:]) / 300, 0, 1)
+        if train_flag == 1:
+            sys_loss = agent_td3.learn_and_update_weights_by_replay(timestep, weight, train_flag)
+        else:
+            sys_loss = agent_td3.learn_and_update_weights_by_replay(100, weight, train_flag)
+        train_flag = 0
+        print("episode=",eps_num)
+        #WARN do all the print here
+        print(score,avg_reward)
+
+main()
