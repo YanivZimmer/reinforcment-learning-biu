@@ -83,8 +83,8 @@ LAYER1_SIZE = 32
 LAYER2_SIZE = 64
 LAYER1_ACTIVATION = ActivationType.RELU.value
 LAYER2_ACTIVATION = ActivationType.RELU.value
-LAYER1_LOSS = LossType.MSE.value
-LAYER2_LOSS = LossType.MSE.value
+LAYER1_LOSS = LossType.HUBER.value
+LAYER2_LOSS = LossType.HUBER.value
 EPSILON = 0.9
 # prev was EPSILON_DEC_RATE = 0.99
 EPSILON_MIN = 0.05
@@ -283,10 +283,10 @@ class DiscretizedActionWrapper(gym.ActionWrapper):
     """
     def __init__(self, env, num_bins=[10, 10], low=None, high=None):
         super().__init__(env)
-        assert isinstance(self.observation_space, spaces.Box)
+        assert isinstance(self.action_space, spaces.Box)
 
-        self.low = self.observation_space.low if low is None else low
-        self.high = self.observation_space.high if high is None else high
+        self.low = self.action_space.low if low is None else low
+        self.high = self.action_space.high if high is None else high
         self.num_bins = num_bins
         self.action_matrix = self._create_discrete_space()
         self.all_perms = self._list_permutations(self.action_matrix)
@@ -898,7 +898,7 @@ class AgentDDQNT(RLModel):
             Activation("softmax")
         ])
 
-        model.compile(optimizer=Adam(lr=lr), loss='mse')
+        model.compile(optimizer=Adam(lr=lr), loss=LAYER1_LOSS)
         return model
 
     def get_name(self):
@@ -1013,7 +1013,7 @@ class AgentDDQN(RLModel):
             Dense(number_actions)
         ])
 
-        model.compile(optimizer=Adam(lr=lr), loss='mse')
+        model.compile(optimizer=Adam(lr=lr), loss=LAYER1_LOSS)
         return model
 
     def get_name(self):
@@ -1095,6 +1095,22 @@ class AgentDDQN(RLModel):
             # print(f'b_idx: {b_idx}')
             q_target[b_idx][actions]=tempa[b_idx]
         nn1.fit(states, q_target,verbose=0)
+    
+    # def train2nn(self, nn1, nn2, state, action_idx, reward, new_state, non_terminal):
+    #     q_next = nn1.predict(new_state)
+    #     q_eval = nn2.predict(new_state)
+    #     q_target = q_eval.copy()
+    #     batch_index = np.arange(self.batch_size, dtype=np.int32)
+
+    #     # max_val = np.max(q_next, axis=1)
+    #     max_arg = np.argmax(q_next, axis=1)
+    #     new_val = reward + self.gamma * q_eval[max_arg] * non_terminal
+    #     for i in batch_index:
+    #         # tralalal=action_idx[i]
+    #         q_target[i, action_idx[i][0]] = new_val[i]
+    #         q_target[i, action_idx[i][1] + self.num_actions] = new_val[i]
+
+    #     _ = nn1.fit(state, q_target, verbose=0)
 
     def learn(self):
         if self.memory.memory_counter<self.batch_size:
